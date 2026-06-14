@@ -310,6 +310,15 @@ impl BenchResult {
         std::fs::create_dir_all(path.as_ref().parent().unwrap_or(Path::new(".")))?;
         std::fs::write(path.as_ref(), &json)
     }
+
+    /// Save and panic on failure (for use in benchmark harness where errors
+    /// would otherwise be silently swallowed).
+    pub fn save_json_or_panic(reports: &[BenchResult], path: impl AsRef<Path>) {
+        let path = path.as_ref().to_path_buf();
+        if let Err(e) = Self::save_json(reports, &path) {
+            panic!("failed to write bench report to {}: {e}", path.display());
+        }
+    }
 }
 
 /// Returns the current commit SHA from `GITHUB_SHA` env or `git rev-parse`.

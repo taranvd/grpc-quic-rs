@@ -93,14 +93,10 @@ jobs:
         if: always()
         run: |
           echo "## Quick Benchmark Results" >> $GITHUB_STEP_SUMMARY
-          if ls bench-output/*.json 2>/dev/null; then
-            for f in bench-output/*.json; do
-              echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
-              cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-            done
-          else
-            echo "_No JSON reports generated._" >> $GITHUB_STEP_SUMMARY
-          fi
+          for f in bench-output/*.json; do
+            echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
+            cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          done
 
   # ── On push/PR to main: regression bench (medium) ────────────────────────
   bench-regression:
@@ -129,14 +125,10 @@ jobs:
         if: always()
         run: |
           echo "## Regression Benchmark Results" >> $GITHUB_STEP_SUMMARY
-          if ls bench-output/*.json 2>/dev/null; then
-            for f in bench-output/*.json; do
-              echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
-              cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-            done
-          else
-            echo "_No JSON reports generated._" >> $GITHUB_STEP_SUMMARY
-          fi
+          for f in bench-output/*.json; do
+            echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
+            cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          done
 
   # ── Nightly / manual: full performance CI ────────────────────────────────
   bench-nightly:
@@ -176,11 +168,7 @@ jobs:
         if: always()
         run: |
           echo "## Nightly Benchmark Results" >> $GITHUB_STEP_SUMMARY
-          if ls bench-output/*.json 2>/dev/null; then
-            for f in bench-output/*.json; do
-              echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
-              cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-            done
-          else
-            echo "_No JSON reports generated._" >> $GITHUB_STEP_SUMMARY
-          fi
+          for f in bench-output/*.json; do
+            echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
+            cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          done
