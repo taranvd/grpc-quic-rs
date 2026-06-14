@@ -3,6 +3,8 @@
 use grpc_quic_metrics::record_connection;
 use grpc_quic_transport::{QuicConnection, QuicEndpoint, TlsConfig};
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 use crate::acceptor::handle_stream;
@@ -168,6 +170,12 @@ impl QuicServer {
 
         let mut signal = Box::pin(signal);
 
+        // Global semaphore that bounds the total number of concurrent stream
+        // handler tasks across all connections.  When exhausted, new streams
+        // are dropped (try_acquire_owned fails), providing backpressure.
+        let stream_limit = (self.max_concurrent_streams as usize).max(64) * 4;
+        let stream_semaphore = Arc::new(Semaphore::new(stream_limit));
+
         loop {
             tokio::select! {
                 _ = &mut signal => {
@@ -192,8 +200,9 @@ impl QuicServer {
                     };
 
                     let service = service.clone();
+                    let sem = stream_semaphore.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(conn, service).await {
+                        if let Err(e) = handle_connection(conn, service, sem).await {
                             error!(error = %e, "connection handling error");
                         }
                     });
@@ -205,8 +214,12 @@ impl QuicServer {
     }
 }
 
-#[tracing::instrument(skip(conn, service))]
-async fn handle_connection<S, B>(conn: QuicConnection, service: S) -> Result<(), ServerError>
+#[tracing::instrument(skip(conn, service, semaphore))]
+async fn handle_connection<S, B>(
+    conn: QuicConnection,
+    service: S,
+    semaphore: Arc<Semaphore>,
+) -> Result<(), ServerError>
 where
     S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
         + Clone
@@ -226,8 +239,18 @@ where
         };
         let (send, recv) = stream_res?;
 
+        // Try to acquire a permit — if all slots are busy, drop the stream.
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                error!("server overloaded — dropping stream");
+                continue;
+            }
+        };
+
         let service = service.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_stream(send, recv, service).await {
                 error!(error = %e, "stream handling error");
             }

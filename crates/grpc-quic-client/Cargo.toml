@@ -23,7 +23,7 @@ tracing     = { workspace = true }
 futures     = { workspace = true }
 tower       = { workspace = true }
 http        = { workspace = true }
-http-body   = "1"
+http-body   = { workspace = true }
 tonic       = { workspace = true }
 pin-project-lite = { workspace = true }
 

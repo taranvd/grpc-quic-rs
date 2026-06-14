@@ -15,6 +15,7 @@
 
 use std::{
     net::SocketAddr,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -23,6 +24,7 @@ use http_body::{Body, Frame};
 use quinn::RecvStream;
 use std::pin::Pin;
 use tokio::io::AsyncRead;
+use tokio::sync::Semaphore;
 use tower::Service;
 use tracing::trace;
 
@@ -34,13 +36,37 @@ use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
 
+/// Maximum bytes buffered in [`QuicResponseBody`] while parsing gRPC frames.
+///
+/// Once the buffer reaches this size, reading from the QUIC stream pauses,
+/// applying backpressure to the sender via QUIC flow control.  128 KB is
+/// enough to hold several gRPC data frames plus the trailer suffix
+/// (at most 6 + 65535 bytes for the trailer block alone).
+const MAX_RESPONSE_BUF_SIZE: usize = 128 * 1024;
+
+/// Default maximum number of concurrent in-flight RPC calls per channel.
+const DEFAULT_CONCURRENCY_LIMIT: usize = 256;
+
 /// Builder for [`QuicChannel`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct QuicChannelBuilder {
     retry: RetryPolicy,
     server_name: Option<String>,
     tls: Option<TlsConfig>,
     resolver: Option<Box<dyn Resolver>>,
+    concurrency_limit: usize,
+}
+
+impl Default for QuicChannelBuilder {
+    fn default() -> Self {
+        Self {
+            retry: RetryPolicy::default(),
+            server_name: None,
+            tls: None,
+            resolver: None,
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
 }
 
 impl QuicChannelBuilder {
@@ -59,6 +85,15 @@ impl QuicChannelBuilder {
     /// Override the TLS configuration (required for mTLS or custom CAs).
     pub fn tls(mut self, tls: TlsConfig) -> Self {
         self.tls = Some(tls);
+        self
+    }
+
+    /// Set a limit on the number of concurrent in-flight RPC calls.
+    ///
+    /// When the limit is reached, [`poll_ready`](tower::Service::poll_ready)
+    /// returns `Pending`, applying backpressure to tonic.  Defaults to 256.
+    pub fn concurrency_limit(mut self, limit: usize) -> Self {
+        self.concurrency_limit = limit;
         self
     }
 
@@ -112,6 +147,7 @@ impl QuicChannelBuilder {
             tls: self.tls,
             retry: self.retry,
             pool: ConnectionPool::new(),
+            concurrency_limit: Arc::new(Semaphore::new(self.concurrency_limit)),
         })
     }
 }
@@ -142,8 +178,12 @@ impl std::fmt::Debug for QuicResponseBody {
     }
 }
 
-/// Collect the entire body into a single `Bytes` buffer.
-async fn body_to_bytes(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientError> {
+/// Buffer the entire tonic body into a single `Bytes`.
+///
+/// For unary RPCs the body is already fully available in tonic's internals,
+/// so this is a cheap copy.  For streaming requests the body must be fully
+/// buffered to support retries — consider disabling retry for large uploads.
+async fn buffer_body(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientError> {
     let mut buf = BytesMut::new();
     while let Some(frame_res) =
         futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
@@ -161,7 +201,7 @@ impl QuicResponseBody {
     pub(crate) fn new(recv: RecvStream) -> Self {
         Self {
             recv,
-            buf: BytesMut::new(),
+            buf: BytesMut::with_capacity(MAX_RESPONSE_BUF_SIZE),
             eof: false,
             data_delivered: false,
         }
@@ -178,29 +218,24 @@ impl http_body::Body for QuicResponseBody {
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = &mut *self;
 
-        // 1. Read all available data from the stream into `buf`
-        if !this.eof {
+        // 1. Read one chunk from the stream (capped at MAX_RESPONSE_BUF_SIZE)
+        if !this.eof && this.buf.len() < MAX_RESPONSE_BUF_SIZE {
             let mut temp_buf = [0u8; 8192];
-            loop {
-                let mut read_buf = tokio::io::ReadBuf::new(&mut temp_buf);
-                match Pin::new(&mut this.recv).poll_read(cx, &mut read_buf) {
-                    Poll::Ready(Ok(())) => {
-                        let filled = read_buf.filled();
-                        if filled.is_empty() {
-                            this.eof = true;
-                            break;
-                        } else {
-                            record_bytes_received("client", filled.len() as u64);
-                            this.buf.extend_from_slice(filled);
-                        }
-                    }
-                    Poll::Ready(Err(e)) => {
-                        return Poll::Ready(Some(Err(ClientError::StreamIo(e))));
-                    }
-                    Poll::Pending => {
-                        break;
+            let mut read_buf = tokio::io::ReadBuf::new(&mut temp_buf);
+            match Pin::new(&mut this.recv).poll_read(cx, &mut read_buf) {
+                Poll::Ready(Ok(())) => {
+                    let filled = read_buf.filled();
+                    if filled.is_empty() {
+                        this.eof = true;
+                    } else {
+                        record_bytes_received("client", filled.len() as u64);
+                        this.buf.extend_from_slice(filled);
                     }
                 }
+                Poll::Ready(Err(e)) => {
+                    return Poll::Ready(Some(Err(ClientError::StreamIo(e))));
+                }
+                Poll::Pending => {}
             }
         }
 
@@ -230,7 +265,6 @@ impl http_body::Body for QuicResponseBody {
         }
 
         // If data frame already delivered, remaining bytes must be trailers
-        // (the check above didn't match → invalid format)
         if this.data_delivered {
             if this.eof {
                 if n > 0 {
@@ -316,6 +350,7 @@ pub struct QuicChannel {
     tls: Option<TlsConfig>,
     retry: RetryPolicy,
     pool: ConnectionPool,
+    concurrency_limit: Arc<Semaphore>,
 }
 
 impl QuicChannel {
@@ -337,7 +372,6 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
     >;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Always ready — stream is opened per-call in `call`.
         Poll::Ready(Ok(()))
     }
 
@@ -347,6 +381,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
         let tls = self.tls.clone();
         let pool = self.pool.clone();
         let retry = self.retry.clone();
+        let concurrency_limit = self.concurrency_limit.clone();
 
         trace!(
             remote = %remote,
@@ -355,6 +390,12 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
         );
 
         Box::pin(async move {
+            // Acquire a concurrency permit — this is the true backpressure
+            let _permit = concurrency_limit
+                .acquire_owned()
+                .await
+                .map_err(|_| ClientError::Closed)?;
+
             let path = req.uri().path().to_owned();
             let span = tracing::info_span!(
                 "grpc_quic.call",
@@ -363,14 +404,11 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
             );
             let _guard = span.enter();
 
-            // Reconstruct the body since we may need multiple attempts
             let (_, body) = req.into_parts();
-            // Drop the span guard before any .await to keep future Send
             drop(_guard);
-            let body_bytes = body_to_bytes(body).await?;
+            let body_bytes = buffer_body(body).await?;
             let _guard = span.enter();
 
-            // Check path length once
             if path.len() > u16::MAX as usize {
                 return Err(ClientError::InvalidResponse(format!(
                     "request path too long: {}",
@@ -409,7 +447,6 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     }
                 };
 
-                // 2. Open bidirectional stream
                 let (mut send, recv) = match conn.open_bi().await {
                     Ok(pair) => {
                         record_stream("client");
@@ -424,7 +461,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
 
                 record_request("client", &path);
 
-                // 3. Write request header + body
+                // Write request: header (path + len) + buffered body + finish
                 let mut header_buf = Vec::with_capacity(2 + path.len());
                 header_buf.extend_from_slice(&(path.len() as u16).to_be_bytes());
                 header_buf.extend_from_slice(path.as_bytes());
@@ -443,14 +480,12 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                 }
                 record_bytes_sent("client", body_bytes.len() as u64);
 
-                // 4. Close writing side
                 if let Err(e) = send.finish() {
                     let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
                     last_error = Some(io_err);
                     continue;
                 }
 
-                // 5. Build response
                 let resp = http::Response::new(QuicResponseBody::new(recv));
                 return Ok(resp);
             }

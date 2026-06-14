@@ -19,6 +19,7 @@ bytes        = { workspace = true }
 thiserror    = { workspace = true }
 tracing      = { workspace = true }
 futures      = { workspace = true }
+webpki-roots = { workspace = true }
 
 [dev-dependencies]
 rcgen        = { workspace = true }

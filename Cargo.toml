@@ -43,9 +43,20 @@ tracing = "0.1"
 futures = "0.3"
 pin-project-lite = "0.2"
 
+# ── http / body ───────────────────────────────────────────────────────────────
+http-body = "1"
+tokio-stream = "0.1"
+async-stream = "0.3"
+
+# ── TLS roots ─────────────────────────────────────────────────────────────────
+webpki-roots = "0.26"
+
 # ── observability ─────────────────────────────────────────────────────────────
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 prometheus = { version = "0.13", features = ["process"] }
+
+# ── build ─────────────────────────────────────────────────────────────────────
+tonic-build = "0.12"
 
 # ── dev / test ────────────────────────────────────────────────────────────────
 rcgen = "0.13"
