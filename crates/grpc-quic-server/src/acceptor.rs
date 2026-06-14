@@ -54,18 +54,30 @@ where
     }
 
     tokio::pin!(body);
+    let mut data_frame_received = false;
     loop {
         let frame = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx))
             .await;
         match frame {
             Some(Ok(frame)) => {
-                if let Ok(data) = frame.into_data() {
-                    let len = data.len() as u64;
-                    if let Err(e) = send.send_data(data).await {
-                        error!("failed to send data: {e}");
-                        break;
+                match frame.into_data() {
+                    Ok(data) => {
+                        data_frame_received = true;
+                        let len = data.len() as u64;
+                        if let Err(e) = send.send_data(data).await {
+                            error!("failed to send data: {e}");
+                            break;
+                        }
+                        record_bytes_sent("server", len);
                     }
-                    record_bytes_sent("server", len);
+                    Err(frame) => {
+                        if let Ok(trailers) = frame.into_trailers() {
+                            if let Err(e) = send.send_trailers(trailers).await {
+                                error!("failed to send trailers: {e}");
+                            }
+                            return Ok(());
+                        }
+                    }
                 }
             }
             Some(Err(e)) => {
@@ -73,8 +85,10 @@ where
                 break;
             }
             None => {
-                if let Err(e) = send.finish().await {
-                    error!("failed to finish stream: {e}");
+                if data_frame_received {
+                    if let Err(e) = send.finish().await {
+                        error!("failed to finish stream: {e}");
+                    }
                 }
                 return Ok(());
             }

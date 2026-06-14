@@ -121,6 +121,8 @@ async fn test_server_serve_and_dispatch() {
             .unwrap();
     });
 
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
     let quic_conn = {
         let client_endpoint = QuicEndpoint::client(client_tls).unwrap();
         client_endpoint

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{error, info};
 
-use crate::acceptor::handle_stream;
+use crate::acceptor::handle_request;
 use crate::error::ServerError;
 
 /// Builder for [`QuicServer`].
@@ -71,41 +71,35 @@ impl QuicServer {
     }
 
     /// Bind to `addr` and serve requests until a shutdown signal is received.
-    pub async fn serve<S, B>(self, addr: SocketAddr, service: S) -> Result<(), ServerError>
+    pub async fn serve<S>(self, addr: SocketAddr, service: S) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
             + Clone
             + Send
             + Sync
             + 'static,
         S::Future: Send + 'static,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        B: http_body::Body + Send + 'static,
-        B::Data: Send,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+        S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         self.serve_with_shutdown(addr, service, std::future::pending())
             .await
     }
 
     /// Bind to `addr` and serve requests until the `signal` future completes.
-    pub async fn serve_with_shutdown<S, B, F>(
+    pub async fn serve_with_shutdown<S, F>(
         self,
         addr: SocketAddr,
         service: S,
         signal: F,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
             + Clone
             + Send
             + Sync
             + 'static,
         S::Future: Send + 'static,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        B: http_body::Body + Send + 'static,
-        B::Data: Send,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+        S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         let tls = self.tls.clone().ok_or_else(|| {
@@ -120,22 +114,19 @@ impl QuicServer {
     }
 
     /// Serve requests over an already-bound `QuicEndpoint`.
-    pub async fn serve_with_incoming<S, B>(
+    pub async fn serve_with_incoming<S>(
         self,
         endpoint: QuicEndpoint,
         service: S,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
             + Clone
             + Send
             + Sync
             + 'static,
         S::Future: Send + 'static,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        B: http_body::Body + Send + 'static,
-        B::Data: Send,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+        S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         self.serve_with_incoming_shutdown(endpoint, service, std::future::pending())
             .await
@@ -143,23 +134,20 @@ impl QuicServer {
 
     /// Serve requests over an already-bound `QuicEndpoint` until the `signal` future completes.
     #[tracing::instrument(skip(self, endpoint, service, signal))]
-    pub async fn serve_with_incoming_shutdown<S, B, F>(
+    pub async fn serve_with_incoming_shutdown<S, F>(
         self,
         endpoint: QuicEndpoint,
         service: S,
         signal: F,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
             + Clone
             + Send
             + Sync
             + 'static,
         S::Future: Send + 'static,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        B: http_body::Body + Send + 'static,
-        B::Data: Send,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+        S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         info!(
@@ -215,35 +203,52 @@ impl QuicServer {
 }
 
 #[tracing::instrument(skip(conn, service, semaphore))]
-async fn handle_connection<S, B>(
+async fn handle_connection<S>(
     conn: QuicConnection,
     service: S,
     semaphore: Arc<Semaphore>,
 ) -> Result<(), ServerError>
 where
-    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
         + Clone
         + Send
         + Sync
         + 'static,
     S::Future: Send + 'static,
-    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    B: http_body::Body + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
 {
-    loop {
-        let stream_res = match conn.accept_bi().await {
-            Some(res) => res,
-            None => break,
-        };
-        let (send, recv) = stream_res?;
+    use grpc_quic_core::server::build_server_conn;
 
-        // Try to acquire a permit — if all slots are busy, drop the stream.
+    let mut h3_conn = match build_server_conn(conn.get_ref().clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("failed to build h3 server connection: {e}");
+            return Ok(());
+        }
+    };
+
+    loop {
+        let resolver = match h3_conn.accept().await {
+            Ok(Some(r)) => r,
+            Ok(None) => break,
+            Err(e) => {
+                error!("h3 accept error: {e}");
+                break;
+            }
+        };
+
+        let (req, stream) = match resolver.resolve_request().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                error!("resolve request error: {e}");
+                continue;
+            }
+        };
+
         let permit = match semaphore.clone().try_acquire_owned() {
             Ok(p) => p,
             Err(_) => {
-                error!("server overloaded — dropping stream");
+                error!("server overloaded — dropping request");
                 continue;
             }
         };
@@ -251,8 +256,8 @@ where
         let service = service.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            if let Err(e) = handle_stream(send, recv, service).await {
-                error!(error = %e, "stream handling error");
+            if let Err(e) = handle_request(req, stream, service).await {
+                error!(error = %e, "request handling error");
             }
         });
     }

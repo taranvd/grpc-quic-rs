@@ -27,7 +27,6 @@ tower       = { workspace = true }
 http        = { workspace = true }
 http-body   = { workspace = true }
 tonic       = { workspace = true }
-pin-project-lite = { workspace = true }
 
 [dev-dependencies]
 grpc-quic-client    = { path = "../grpc-quic-client" }
