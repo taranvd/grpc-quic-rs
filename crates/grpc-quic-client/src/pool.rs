@@ -5,6 +5,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use grpc_quic_metrics::record_connection;
 use grpc_quic_transport::QuicConnection;
 
 use crate::error::ClientError;
@@ -42,6 +43,7 @@ impl ConnectionPool {
             return Ok(conn.clone());
         }
         let conn = connect_fn(addr).await?;
+        record_connection("client");
         debug!(remote = %addr, "established new QUIC connection");
         map.insert(addr, conn.clone());
         Ok(conn)

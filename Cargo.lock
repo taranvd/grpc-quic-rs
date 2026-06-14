@@ -447,6 +447,7 @@ dependencies = [
  "bytes",
  "futures",
  "grpc-quic-client",
+ "grpc-quic-metrics",
  "grpc-quic-transport",
  "http",
  "http-body",

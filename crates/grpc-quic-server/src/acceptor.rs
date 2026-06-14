@@ -7,6 +7,7 @@ use bytes::Bytes;
 use http_body::{Body, Frame};
 use quinn::{RecvStream, SendStream};
 use tokio::io::AsyncRead;
+use grpc_quic_metrics::{record_stream, record_request, record_bytes_sent, record_bytes_received};
 use crate::error::ServerError;
 
 /// Request body that reads raw bytes from a QUIC receive stream.
@@ -38,6 +39,8 @@ impl Body for QuicRequestBody {
                 if filled.is_empty() {
                     Poll::Ready(None)
                 } else {
+                    let len = filled.len() as u64;
+                    record_bytes_received("server", len);
                     let bytes = Bytes::copy_from_slice(filled);
                     Poll::Ready(Some(Ok(Frame::data(bytes))))
                 }
@@ -74,6 +77,9 @@ where
         .map_err(|e| ServerError::InvalidRequest(format!("failed to read path: {e}")))?;
     let path = String::from_utf8(path_bytes)
         .map_err(|e| ServerError::InvalidRequest(format!("path is not UTF-8: {e}")))?;
+
+    record_stream("server");
+    record_request("server", &path);
 
     // 3. Build request
     let request_body = QuicRequestBody::new(recv);
@@ -112,8 +118,9 @@ where
                     let chunk = data.chunk();
                     send.write_all(chunk).await
                         .map_err(|e| ServerError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-                    let len = chunk.len();
-                    data.advance(len);
+                    let len = chunk.len() as u64;
+                    record_bytes_sent("server", len);
+                    data.advance(len as usize);
                 }
             }
             Err(frame) => {

@@ -12,6 +12,7 @@ categories.workspace  = true
 
 [dependencies]
 grpc-quic-transport = { path = "../grpc-quic-transport" }
+grpc-quic-metrics   = { path = "../grpc-quic-metrics" }
 
 quinn       = { workspace = true }
 tokio       = { workspace = true }

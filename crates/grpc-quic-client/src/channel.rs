@@ -26,6 +26,7 @@ use std::pin::Pin;
 use tokio::io::AsyncRead;
 use quinn::RecvStream;
 
+use grpc_quic_metrics::{record_stream, record_request, record_bytes_sent, record_bytes_received};
 use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
@@ -138,6 +139,7 @@ impl http_body::Body for QuicResponseBody {
                             this.eof = true;
                             break;
                         } else {
+                            record_bytes_received("client", filled.len() as u64);
                             this.buf.extend_from_slice(filled);
                         }
                     }
@@ -296,6 +298,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
             // 2. Open bidirectional stream
             let (mut send, recv) = conn.open_bi().await
                 .map_err(ClientError::Transport)?;
+            record_stream("client");
 
             // 3. Write request header: path length (2 bytes BE) + path bytes
             let path = req.uri().path();
@@ -304,12 +307,15 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                 return Err(ClientError::InvalidResponse(format!("request path too long: {path_len}")));
             }
             
+            record_request("client", path);
+
             let mut header_buf = Vec::with_capacity(2 + path_len);
             header_buf.extend_from_slice(&(path_len as u16).to_be_bytes());
             header_buf.extend_from_slice(path.as_bytes());
             
             send.write_all(&header_buf).await
                 .map_err(|e| ClientError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            record_bytes_sent("client", (2 + path_len) as u64);
 
             // 4. Stream request body frames (verbatim from tonic)
             let mut body = req.into_body();
@@ -326,8 +332,9 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                         let chunk = data.chunk();
                         send.write_all(chunk).await
                             .map_err(|e| ClientError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-                        let len = chunk.len();
-                        data.advance(len);
+                        let len = chunk.len() as u64;
+                        record_bytes_sent("client", len);
+                        data.advance(len as usize);
                     }
                 }
             }

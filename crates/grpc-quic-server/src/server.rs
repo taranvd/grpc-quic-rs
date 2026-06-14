@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use grpc_quic_transport::{TlsConfig, QuicConnection, QuicEndpoint};
+use grpc_quic_metrics::record_connection;
 use tracing::{info, error};
 
 use crate::error::ServerError;
@@ -149,7 +150,10 @@ impl QuicServer {
                         None => break,
                     };
                     let conn = match conn_res {
-                        Ok(c) => c,
+                        Ok(c) => {
+                            record_connection("server");
+                            c
+                        }
                         Err(e) => {
                             error!(error = %e, "failed to accept connection");
                             continue;
