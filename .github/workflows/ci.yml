@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -63,3 +67,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check benchmarks compile
         run: cargo check --workspace --benches
+
+      - name: Check loss-simulation bench compiles (Linux-only, requires features)
+        run: cargo check -p grpc-quic-benches --features loss-sim --benches
+
+      - name: Configure 5% packet loss on lo (idempotent)
+        run: |
+          sudo tc qdisc replace dev lo root netem loss 5%
+          echo "--- qdisc status ---"
+          tc qdisc show dev lo
+
+      - name: Run loss bench (quick smoke-test under loss)
+        run: cargo bench -p grpc-quic-benches --features loss-sim --bench loss_bench -- --quick
+
+      - name: Remove packet loss on lo
+        if: always()
+        run: sudo tc qdisc del dev lo root 2>/dev/null || true

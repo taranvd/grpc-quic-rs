@@ -65,6 +65,10 @@ docs-serve: check-docs
 bench:
     cargo bench --workspace
 
+# Run loss-simulation benchmark (Linux only, requires tc/netem)
+bench-loss:
+    cargo bench --features loss-sim --bench loss_bench
+
 # ── CI (mirrors GitHub Actions pipeline) ───────────────────────────────────────
 
 ci: fmt-check lint check test
