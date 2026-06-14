@@ -25,3 +25,6 @@ pub use connection::QuicConnection;
 pub use endpoint::QuicEndpoint;
 pub use error::TransportError;
 pub use tls::TlsConfig;
+
+#[cfg(test)]
+mod tests;

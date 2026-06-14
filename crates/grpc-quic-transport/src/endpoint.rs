@@ -42,11 +42,13 @@ impl QuicEndpoint {
     ///
     /// Full implementation in Phase 2 (rustls + quinn server config setup).
     pub fn server(addr: SocketAddr, tls: TlsConfig) -> Result<Self, TransportError> {
-        // Phase 2: build quinn::ServerConfig from TLS, bind endpoint.
-        let _ = (addr, tls);
-        Err(TransportError::EndpointBind(
-            "Phase 2 not yet implemented".into(),
-        ))
+        let server_config = tls.server_config()?;
+        let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(server_config)
+            .map_err(|e| TransportError::Tls(e.to_string()))?;
+        let quinn_server_config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic_server_config));
+        
+        let endpoint = quinn::Endpoint::server(quinn_server_config, addr)?;
+        Ok(Self { inner: endpoint })
     }
 
     /// Create a **client-side** endpoint bound to an ephemeral local address.
@@ -59,11 +61,15 @@ impl QuicEndpoint {
     ///
     /// Full implementation in Phase 2 (rustls + quinn client config setup).
     pub fn client(tls: TlsConfig) -> Result<Self, TransportError> {
-        // Phase 2: build quinn::ClientConfig from TLS, bind ephemeral socket.
-        let _ = tls;
-        Err(TransportError::EndpointBind(
-            "Phase 2 not yet implemented".into(),
-        ))
+        let client_config = tls.client_config()?;
+        let quic_client_config = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)
+            .map_err(|e| TransportError::Tls(e.to_string()))?;
+        let quinn_client_config = quinn::ClientConfig::new(std::sync::Arc::new(quic_client_config));
+        
+        let bind_addr = "0.0.0.0:0".parse().unwrap();
+        let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+        endpoint.set_default_client_config(quinn_client_config);
+        Ok(Self { inner: endpoint })
     }
 
     /// Accept the next incoming QUIC connection.
@@ -94,6 +100,11 @@ impl QuicEndpoint {
             .await
             .map_err(TransportError::Connection)?;
         Ok(QuicConnection::new(conn))
+    }
+
+    /// Get the local `SocketAddr` this endpoint is bound to.
+    pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
+        self.inner.local_addr().map_err(TransportError::Io)
     }
 
     /// Close the endpoint gracefully.
