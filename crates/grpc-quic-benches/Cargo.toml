@@ -13,20 +13,29 @@ rcgen = { workspace = true }
 rustls = { workspace = true }
 futures = { workspace = true }
 
+hdrhistogram = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 
 [build-dependencies]
 tonic-build = "0.12"
 
-[features]
-loss-sim = []
-
 [[bench]]
-name = "transport_bench"
+name = "quic_latency"
 harness = false
 
 [[bench]]
-name = "loss_bench"
+name = "tcp_latency"
 harness = false
-required-features = ["loss-sim"]
+
+[[bench]]
+name = "loss_sim"
+harness = false
+
+[[bench]]
+name = "handshake"
+harness = false

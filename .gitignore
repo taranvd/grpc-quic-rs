@@ -19,3 +19,6 @@ docs/mermaid*.js
 
 # AI session context (handoff files)
 CONTEXT.md
+
+# Benchmark output (JSON reports, never committed)
+/bench-output/
