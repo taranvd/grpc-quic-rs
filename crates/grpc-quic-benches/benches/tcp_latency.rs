@@ -28,6 +28,7 @@ fn bench_tcp_latency(c: &mut Criterion) {
     let mut reports = Vec::new();
 
     for &size in PAYLOAD_SIZES {
+        eprintln!("[tcp_latency] payload={size} start");
         let mut group = c.benchmark_group("tcp_latency");
         group.throughput(Throughput::Bytes(size as u64));
 
@@ -44,9 +45,11 @@ fn bench_tcp_latency(c: &mut Criterion) {
             });
         });
         group.finish();
+        eprintln!("[tcp_latency] payload={size} criterion done");
 
         let hist = take_histogram();
         reports.push(BenchResult::new("tcp", "latency", 1, 0, size, &hist));
+        eprintln!("[tcp_latency] payload={size} recorded");
     }
 
     shutdown_servers(servers);

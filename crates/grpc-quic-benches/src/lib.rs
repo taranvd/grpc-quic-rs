@@ -43,7 +43,7 @@ impl BenchService for EchoService {
 
 // ─── Default payload sizes & concurrency levels ────────────────────────────
 
-pub const PAYLOAD_SIZES: &[usize] = &[64, 256, 1024, 4096];
+pub const PAYLOAD_SIZES: &[usize] = &[64, 256, 1024, 4096, 16384];
 pub const CONCURRENCY: &[usize] = &[1, 4, 8, 16];
 pub const LOSS_PERCENTS: &[u32] = &[0, 1, 5];
 
