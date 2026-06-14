@@ -632,7 +632,6 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures",
- "grpc-quic-transport",
  "h3",
  "h3-quinn",
  "http",
