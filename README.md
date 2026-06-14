@@ -2,7 +2,7 @@
 
 > **Custom QUIC transport for tonic gRPC** — replaces HTTP/TCP with QUIC streams while preserving full gRPC semantics.
 
-[![CI](https://github.com/example/grpc-quic-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/example/grpc-quic-rs/actions)
+[![CI](https://github.com/taranvd/grpc-quic-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/taranvd/grpc-quic-rs/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 ---
