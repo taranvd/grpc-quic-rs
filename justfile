@@ -37,8 +37,28 @@ lint:
 
 # ── Docs ───────────────────────────────────────────────────────────────────────
 
+# Build API documentation with rustdoc
 doc:
     cargo doc --workspace --no-deps --open
+
+# Build API docs to a separate dir (used by mdbook)
+docs-api:
+    cargo doc --workspace --no-deps --document-private-items --target-dir target/api-docs
+
+# Check that mdbook + mermaid are installed
+check-docs:
+    @which mdbook > /dev/null || (echo "Install mdbook: cargo install mdbook" && exit 1)
+    @which mdbook-mermaid > /dev/null || (echo "Install mdbook-mermaid: cargo install mdbook-mermaid" && exit 1)
+
+# Build the mdbook documentation
+docs-build: check-docs
+    mdbook-mermaid install docs/ 2>/dev/null || true
+    mdbook build docs
+
+# Serve the mdbook documentation locally
+docs-serve: check-docs
+    mdbook-mermaid install docs/ 2>/dev/null || true
+    mdbook serve docs --open
 
 # ── Benchmarks ─────────────────────────────────────────────────────────────────
 

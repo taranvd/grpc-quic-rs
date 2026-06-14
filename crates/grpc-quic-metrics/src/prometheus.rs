@@ -5,11 +5,17 @@ use std::sync::OnceLock;
 
 /// Holds the registered Prometheus metrics.
 pub struct Metrics {
+    /// Total number of QUIC connections established, labelled by `role` ("client" | "server").
     pub connections_total: IntCounterVec,
+    /// Total number of QUIC streams opened, labelled by `role`.
     pub streams_total: IntCounterVec,
+    /// Total number of gRPC requests dispatched, labelled by `role` and `path`.
     pub requests_total: IntCounterVec,
+    /// Total number of reconnection attempts (client-side), no labels.
     pub reconnects_total: IntCounterVec,
+    /// Total bytes written to QUIC streams, labelled by `role`.
     pub bytes_sent: IntCounterVec,
+    /// Total bytes read from QUIC streams, labelled by `role`.
     pub bytes_received: IntCounterVec,
 }
 

@@ -2,10 +2,15 @@
 
 /// Span names used across the `grpc-quic` ecosystem.
 pub mod spans {
+    /// Outbound QUIC connection establishment (client-side).
     pub const CONNECT: &str = "grpc_quic.connect";
+    /// Incoming QUIC connection accepted (server-side).
     pub const ACCEPT: &str = "grpc_quic.accept";
+    /// Data written to a QUIC stream.
     pub const SEND: &str = "grpc_quic.send";
+    /// Data read from a QUIC stream.
     pub const RECV: &str = "grpc_quic.recv";
+    /// Client reconnection attempt after a failure.
     pub const RECONNECT: &str = "grpc_quic.reconnect";
 }
 

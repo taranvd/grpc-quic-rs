@@ -9,3 +9,13 @@
 
 # OS files
 .DS_Store
+
+# Generated TLS certificates
+cert.der
+
+# mdbook output + generated assets
+docs/book/
+docs/mermaid*.js
+
+# AI session context (handoff files)
+CONTEXT.md

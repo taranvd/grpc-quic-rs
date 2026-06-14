@@ -1,0 +1,13 @@
+[book]
+title = "grpc-quic-rs"
+authors = ["grpc-quic contributors"]
+language = "en"
+description = "Custom QUIC transport for tonic gRPC"
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+edit-url-template = "https://github.com/taranvd/grpc-quic-rs/edit/develop/docs/src/{path}"
+git-repository-url = "https://github.com/taranvd/grpc-quic-rs"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

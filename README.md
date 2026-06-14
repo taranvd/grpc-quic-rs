@@ -126,7 +126,7 @@ All four gRPC streaming modes are supported:
 - [x] **Phase 5** — All streaming modes + examples
 - [x] **Phase 6** — Prometheus metrics + tracing spans
 - [x] **Phase 7** — Service discovery (Resolver trait + StaticResolver)
-- [ ] **Phase 8** — Full documentation
+- [x] **Phase 8** — mdbook documentation + rustdoc
 - [ ] **Phase 9** — Criterion benchmarks (vs tonic/TCP baseline)
 
 ---
@@ -136,13 +136,17 @@ All four gRPC streaming modes are supported:
 ```bash
 # Install just (task runner)
 cargo install just
+# Install mdbook for docs
+cargo install mdbook mdbook-mermaid
 
-just build    # cargo build
-just test     # cargo test
-just check    # cargo check
-just fmt      # cargo fmt
-just lint     # cargo clippy -D warnings
-just ci       # full CI pipeline locally
+just build       # cargo build
+just test        # cargo test
+just check       # cargo check
+just fmt         # cargo fmt
+just lint        # cargo clippy -D warnings
+just ci          # full CI pipeline locally
+just docs-serve  # read the mdbook documentation
+just doc         # open rustdoc API docs
 ```
 
 ---
