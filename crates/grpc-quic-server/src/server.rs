@@ -28,7 +28,8 @@ impl QuicServerBuilder {
         self
     }
 
-    /// Bind and return a [`QuicServer`] ready to serve.
+    /// Return a configured [`QuicServer`]. The actual socket bind happens in
+    /// [`serve`](QuicServer::serve) or [`serve_with_incoming`](QuicServer::serve_with_incoming).
     pub fn build(self) -> QuicServer {
         QuicServer {
             tls: self.tls,
@@ -44,6 +45,16 @@ impl QuicServerBuilder {
 ///   └── quinn::Endpoint  (accepts QUIC connections)
 ///         └── per connection: accept bi-streams
 ///               └── each bi-stream: read path + gRPC bytes → tonic handler
+/// ```
+///
+/// ```ignore
+/// // Build and start the server:
+/// let server = QuicServer::builder()
+///     .tls(tls_config)
+///     .build();
+///
+/// // Pass any tonic-generated Router or service_fn:
+/// server.serve(addr, MyServiceServer::new(my_service)).await?;
 /// ```
 #[derive(Debug)]
 pub struct QuicServer {

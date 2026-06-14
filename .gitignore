@@ -9,3 +9,10 @@
 
 # OS files
 .DS_Store
+
+# Generated TLS certificates
+cert.der
+
+# mdbook output + generated assets
+docs/book/
+docs/mermaid*.js
