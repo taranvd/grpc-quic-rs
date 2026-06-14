@@ -1,7 +1,8 @@
 # grpc-quic-rs
 
-**Custom QUIC transport for tonic gRPC** — replaces HTTP/TCP with QUIC streams
-while preserving full gRPC semantics.
+**gRPC over HTTP/3 over QUIC for tonic** — replaces HTTP/2/TCP with
+standards-compliant HTTP/3 (h3 + h3-quinn) over QUIC while preserving full
+gRPC semantics.
 
 ## Motivation
 
@@ -24,7 +25,7 @@ protobuf definitions or service implementations.
 ## Design Principle
 
 > grpc-quic-rs does NOT modify gRPC semantics.
-> It only replaces the transport layer (TCP → QUIC).
+> It replaces HTTP/2/TCP with HTTP/3/QUIC.
 > All gRPC payload bytes are forwarded verbatim — never interpreted or re-encoded.
 
 ## Project Status

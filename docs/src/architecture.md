@@ -12,54 +12,83 @@ flowchart TB
     subgraph grpc-quic-rs
         C[grpc-quic-client<br/>QuicChannel]
         V[grpc-quic-server<br/>QuicServer]
+        K[grpc-quic-core<br/>h3 transport + body]
         T[grpc-quic-transport<br/>QUIC primitives]
         M[grpc-quic-metrics<br/>Prometheus + tracing]
         D[grpc-quic-discovery<br/>Resolver trait]
     end
 
     subgraph Network
-        Q[quinn · QUIC · UDP<br/>TLS 1.3 via rustls]
+        H[HTTP/3 · h3 + h3-quinn]
+        Q[QUIC · quinn · UDP<br/>TLS 1.3 via rustls]
     end
 
     S --> C
     S --> V
-    C --> T
-    V --> T
+    C --> K
+    V --> K
+    K --> T
     T --> Q
     C -.-> M
     V -.-> M
     C -.-> D
 ```
 
-## Wire Protocol
-
-Each gRPC call maps to **one QUIC bi-directional stream**.
+## Protocol Stack
 
 ```
-┌─ Request envelope (client → server) ──────────────────────┐
-│  [u16 BE: path_len][path_bytes][gRPC payload from tonic…]  │
-└────────────────────────────────────────────────────────────┘
-┌─ Response envelope (server → client) ─────────────────────┐
-│  [gRPC response payload from tonic…]                       │
-│  [u32 BE: grpc_status][u16 BE: msg_len][msg_bytes]         │
-└────────────────────────────────────────────────────────────┘
+gRPC (protobuf codec + service traits)
+  ↓
+HTTP/3 (h3 v0.0.8 — pseudo-headers, data frames, trailers)
+  ↓
+QUIC (quinn v0.11 — bi-directional streams, TLS 1.3)
+  ↓
+UDP
+```
+
+## HTTP/3 Request Flow
+
+### Client → Server
+
+```
+http::Request<BoxBody>
+  → :method=POST
+  → :path=/pkg.Service/Method
+  → :authority=host:port
+  → content-type: application/grpc
+  → h3::client::send_request(req)
+  → stream.send_data(body_chunks)
+  → stream.finish()
+```
+
+### Server → Client
+
+```
+h3::server::accept() + resolve_request()
+  → Request</()> з :method, :path, :authority
+  → stream.split() → (SendStream, RecvStream)
+  → RecvBody → tonic Request<BoxBody>
+  → dispatch to tonic service
+  → Response → send_response(headers)
+  → send_data(body_chunks)
+  → send_trailers(grpc-status, grpc-message)
 ```
 
 ## Streaming Modes
 
-| Mode | QUIC mapping |
+All four modes use the same HTTP/3 mechanism — no special handling:
+
+| Mode | Request body | Response body |
+|---|---|---|
+| Unary | Single message | Single message + trailers |
+| Client Streaming | N messages (data frames) | Single message + trailers |
+| Server Streaming | Single message | N messages (data frames) + trailers |
+| Bidirectional | N messages (interleaved) | N messages (interleaved) + trailers |
+
+## Key crates
+
+| Crate | Role |
 |---|---|
-| Unary | 1 bi-directional stream, half-closed after request |
-| Client Streaming | 1 bi-directional stream, client writes N messages |
-| Server Streaming | 1 bi-directional stream, server writes N messages |
-| Bidirectional | 1 bi-directional stream, both sides write concurrently |
-
-## Connection Lifecycle
-
-1. **Client** creates a `QuicEndpoint::client()` bound to ephemeral port
-2. **Client** calls `endpoint.connect(addr, server_name)` → QUIC handshake (TLS 1.3)
-3. **Connection** stored in `ConnectionPool` for reuse
-4. **Per RPC call**: `conn.open_bi()` → write path header + gRPC payload → half-close
-5. **Server** accepts via `endpoint.accept()` → spawns per-connection handler
-6. **Per stream**: reads path header → dispatches to tonic service → streams response
-7. **Server** writes trailer status (grpc-status, grpc-message) → half-close
+| `grpc-quic-core` | h3 connection builders, `ServerRecvBody`/`ClientRecvBody` (http_body::Body on h3 streams), error types |
+| `grpc-quic-client` | `H3ClientSession` pool, `QuicChannel` (tower::Service) |
+| `grpc-quic-server` | h3 accept/resolve/dispatch, graceful shutdown |

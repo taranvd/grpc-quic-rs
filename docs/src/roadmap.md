@@ -8,7 +8,8 @@
 - [x] **Phase 6** — Prometheus metrics + tracing spans
 - [x] **Phase 7** — Service discovery (Resolver trait + StaticResolver)
 - [x] **Phase 8** — Documentation (this book, rustdoc, README)
-- [ ] **Phase 9** — Criterion benchmarks (QUIC vs TCP/tonic baseline)
+- [x] **Phase 9** — Criterion benchmarks (QUIC vs TCP/tonic baseline)
+- [x] **Phase 10** — Rewrite to HTTP/3 (h3 + h3-quinn), remove custom wire format
 
 ## Future Ideas
 
