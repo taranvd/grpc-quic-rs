@@ -127,6 +127,9 @@ pub struct QuicResponseBody {
     recv: RecvStream,
     buf: BytesMut,
     eof: bool,
+    /// Set to `true` once the gRPC data frame has been delivered.
+    /// After this, only trailers are accepted.
+    data_delivered: bool,
 }
 
 impl std::fmt::Debug for QuicResponseBody {
@@ -134,6 +137,7 @@ impl std::fmt::Debug for QuicResponseBody {
         f.debug_struct("QuicResponseBody")
             .field("buf", &self.buf)
             .field("eof", &self.eof)
+            .field("data_delivered", &self.data_delivered)
             .finish()
     }
 }
@@ -159,6 +163,7 @@ impl QuicResponseBody {
             recv,
             buf: BytesMut::new(),
             eof: false,
+            data_delivered: false,
         }
     }
 }
@@ -202,8 +207,7 @@ impl http_body::Body for QuicResponseBody {
         // 2. Parse frames from `buf`
         let n = this.buf.len();
 
-        // Try trailers first: if buf starts with [u32 status][u16 msg_len][msg],
-        // and the total matches, this is a trailer block (regardless of eof).
+        // Try trailers first: [u32 status][u16 msg_len][msg]
         if n >= 6 {
             let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
             let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
@@ -225,13 +229,28 @@ impl http_body::Body for QuicResponseBody {
             }
         }
 
-        // Otherwise, try to parse a gRPC frame
+        // If data frame already delivered, remaining bytes must be trailers
+        // (the check above didn't match → invalid format)
+        if this.data_delivered {
+            if this.eof {
+                if n > 0 {
+                    return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
+                        "trailing garbage bytes at end of stream: {n} bytes"
+                    )))));
+                }
+                return Poll::Ready(None);
+            }
+            return Poll::Pending;
+        }
+
+        // Otherwise, try to parse a gRPC data frame
         if n >= 5 {
             let len =
                 u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
             let total_len = 5 + len;
 
             if n >= total_len {
+                this.data_delivered = true;
                 let data = this.buf.split_to(total_len).freeze();
                 return Poll::Ready(Some(Ok(Frame::data(data))));
             } else if this.eof {
