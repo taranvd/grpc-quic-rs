@@ -315,6 +315,14 @@ impl BenchResult {
     /// would otherwise be silently swallowed).
     pub fn save_json_or_panic(reports: &[BenchResult], path: impl AsRef<Path>) {
         let path = path.as_ref().to_path_buf();
+        eprintln!(
+            "[bench] saving {} results to {} (cwd: {})",
+            reports.len(),
+            path.display(),
+            std::env::current_dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_else(|_| "unknown".to_string()),
+        );
         if let Err(e) = Self::save_json(reports, &path) {
             panic!("failed to write bench report to {}: {e}", path.display());
         }
