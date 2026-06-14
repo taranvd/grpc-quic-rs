@@ -11,8 +11,9 @@ keywords.workspace    = true
 categories.workspace  = true
 
 [dependencies]
-grpc-quic-transport = { path = "../grpc-quic-transport" }
-grpc-quic-metrics   = { path = "../grpc-quic-metrics" }
+grpc-quic-transport  = { path = "../grpc-quic-transport" }
+grpc-quic-metrics    = { path = "../grpc-quic-metrics" }
+grpc-quic-discovery  = { path = "../grpc-quic-discovery" }
 
 quinn       = { workspace = true }
 tokio       = { workspace = true }

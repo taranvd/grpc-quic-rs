@@ -26,17 +26,30 @@ use std::pin::Pin;
 use tokio::io::AsyncRead;
 use quinn::RecvStream;
 
+use grpc_quic_discovery::Resolver;
 use grpc_quic_metrics::{record_stream, record_request, record_bytes_sent, record_bytes_received, record_reconnect};
 use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
 
 /// Builder for [`QuicChannel`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct QuicChannelBuilder {
     retry: RetryPolicy,
     server_name: Option<String>,
     tls: Option<TlsConfig>,
+    resolver: Option<Box<dyn Resolver>>,
+}
+
+impl Default for QuicChannelBuilder {
+    fn default() -> Self {
+        Self {
+            retry: RetryPolicy::default(),
+            server_name: None,
+            tls: None,
+            resolver: None,
+        }
+    }
 }
 
 impl QuicChannelBuilder {
@@ -58,18 +71,46 @@ impl QuicChannelBuilder {
         self
     }
 
+    /// Set a service resolver for discovery-based addressing.
+    ///
+    /// When configured, `connect()` first tries to parse the input as a raw
+    /// socket address. If that fails, it falls back to resolving via this
+    /// resolver. If the resolved list is empty, an error is returned.
+    pub fn resolver(mut self, resolver: impl Resolver) -> Self {
+        self.resolver = Some(Box::new(resolver));
+        self
+    }
+
     /// Parse `addr` and build a [`QuicChannel`] ready for use with tonic.
     ///
     /// No network activity happens here; connections are established lazily.
     ///
+    /// If a [`resolver`](Self::resolver) has been configured, `addr` is first
+    /// tried as a raw socket address; if that fails, the resolver is consulted.
+    /// The first resolved address is used.
+    ///
     /// # Errors
     ///
-    /// Returns [`ClientError`] if `addr` cannot be parsed.
+    /// Returns [`ClientError`] if `addr` cannot be parsed and no resolver
+    /// is configured, or if the resolver returns an empty list.
     pub async fn connect(self, addr: impl Into<String>) -> Result<QuicChannel, ClientError> {
         let addr_str = addr.into();
-        let remote: SocketAddr = addr_str
-            .parse()
-            .map_err(|_| ClientError::InvalidResponse(format!("invalid address: {addr_str}")))?;
+
+        let remote = if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            addr
+        } else if let Some(ref resolver) = self.resolver {
+            let mut addrs = resolver.resolve(&addr_str);
+            if addrs.is_empty() {
+                return Err(ClientError::InvalidResponse(format!(
+                    "resolver returned no addresses for: {addr_str}"
+                )));
+            }
+            addrs.remove(0)
+        } else {
+            return Err(ClientError::InvalidResponse(format!(
+                "invalid address and no resolver configured: {addr_str}"
+            )));
+        };
 
         let server_name = self
             .server_name

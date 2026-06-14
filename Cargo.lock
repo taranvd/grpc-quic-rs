@@ -389,6 +389,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures",
+ "grpc-quic-discovery",
  "grpc-quic-metrics",
  "grpc-quic-transport",
  "http",

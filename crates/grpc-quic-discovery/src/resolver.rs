@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 /// Implementors can wrap static lists, DNS, consul, etcd, or any discovery
 /// backend. The trait is designed to be `Send + Sync + 'static` so resolvers
 /// can be stored in shared state and called from async tasks.
-pub trait Resolver: Send + Sync + 'static {
+pub trait Resolver: std::fmt::Debug + Send + Sync + 'static {
     /// Resolve `service_name` to a list of [`SocketAddr`]s.
     ///
     /// Returns an empty `Vec` if the service is not found.
