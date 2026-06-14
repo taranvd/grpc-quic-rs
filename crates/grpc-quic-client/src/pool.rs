@@ -1,60 +1,63 @@
-//! Connection pool for QUIC connections.
-
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use grpc_quic_core::client::H3ClientSession;
 use grpc_quic_metrics::record_connection;
 use grpc_quic_transport::QuicConnection;
 
 use crate::error::ClientError;
 
-/// A pool of QUIC connections keyed by remote [`SocketAddr`].
-///
-/// The pool returns an existing live connection if one is available, otherwise
-/// it establishes a new one. Connections are validated lazily on use.
+#[derive(Clone, Debug)]
+pub struct PoolEntry {
+    pub quic: QuicConnection,
+    pub h3: H3ClientSession,
+}
+
 #[derive(Clone, Debug)]
 pub struct ConnectionPool {
-    inner: Arc<Mutex<HashMap<SocketAddr, QuicConnection>>>,
+    inner: Arc<Mutex<HashMap<SocketAddr, PoolEntry>>>,
 }
 
 impl ConnectionPool {
-    /// Create a new empty pool.
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Return a connection to `addr`, creating one via `connect_fn` if needed.
     pub async fn get_or_connect<F, Fut>(
         &self,
         addr: SocketAddr,
         connect_fn: F,
-    ) -> Result<QuicConnection, ClientError>
+    ) -> Result<PoolEntry, ClientError>
     where
         F: FnOnce(SocketAddr) -> Fut,
         Fut: std::future::Future<Output = Result<QuicConnection, ClientError>>,
     {
         let mut map = self.inner.lock().await;
-        if let Some(conn) = map.get(&addr) {
-            if conn.is_closed() {
-                debug!(remote = %addr, "cached connection is closed, removing");
-                map.remove(&addr);
-            } else {
-                debug!(remote = %addr, "reusing existing QUIC connection");
-                return Ok(conn.clone());
+        if let Some(entry) = map.get(&addr) {
+            if !entry.quic.is_closed() {
+                debug!(remote = %addr, "reusing existing QUIC connection + h3 session");
+                return Ok(entry.clone());
             }
+            debug!(remote = %addr, "cached connection is closed, removing");
+            map.remove(&addr);
         }
-        let conn = connect_fn(addr).await?;
+        let quic = connect_fn(addr).await?;
+        let h3 = H3ClientSession::new(quic.get_ref().clone())
+            .await
+            .map_err(|e| {
+                ClientError::StreamIo(std::io::Error::other(e.to_string()))
+            })?;
         record_connection("client");
-        debug!(remote = %addr, "established new QUIC connection");
-        map.insert(addr, conn.clone());
-        Ok(conn)
+        debug!(remote = %addr, "established new QUIC connection + h3 session");
+        let entry = PoolEntry { quic: quic.clone(), h3 };
+        map.insert(addr, entry.clone());
+        Ok(entry)
     }
 
-    /// Remove a connection from the pool (called after a connection error).
     pub async fn remove(&self, addr: &SocketAddr) {
         let mut map = self.inner.lock().await;
         map.remove(addr);
