@@ -1,0 +1,20 @@
+[package]
+name = "grpc-quic-benches"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+grpc-quic = { path = "../grpc-quic", features = ["full"] }
+grpc-quic-transport = { path = "../grpc-quic-transport" }
+quinn = { workspace = true }
+tokio = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "transport_bench"
+harness = false
