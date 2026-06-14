@@ -1,0 +1,32 @@
+[package]
+name        = "grpc-quic-server"
+description = "gRPC server over QUIC transport — QuicServer that delegates to tonic Router"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+keywords.workspace    = true
+categories.workspace  = true
+
+[dependencies]
+grpc-quic-transport = { path = "../grpc-quic-transport" }
+
+quinn       = { workspace = true }
+tokio       = { workspace = true }
+bytes       = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+futures     = { workspace = true }
+tower       = { workspace = true }
+http        = { workspace = true }
+tonic       = { workspace = true }
+pin-project-lite = { workspace = true }
+
+[dev-dependencies]
+grpc-quic-client    = { path = "../grpc-quic-client" }
+rcgen               = { workspace = true }
+tokio               = { workspace = true }
+tokio-test          = { workspace = true }
+tracing-subscriber  = { workspace = true }

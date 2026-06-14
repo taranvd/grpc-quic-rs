@@ -1,0 +1,51 @@
+[workspace]
+members = [
+    "crates/grpc-quic",
+    "crates/grpc-quic-transport",
+    "crates/grpc-quic-client",
+    "crates/grpc-quic-server",
+    "crates/grpc-quic-metrics",
+    "crates/grpc-quic-discovery",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["grpc-quic contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/taranvd/grpc-quic-rs"
+keywords = ["grpc", "quic", "tonic", "transport", "networking"]
+categories = ["network-programming", "asynchronous"]
+
+[workspace.dependencies]
+# ── async runtime ─────────────────────────────────────────────────────────────
+tokio = { version = "1", features = ["full"] }
+
+# ── QUIC ──────────────────────────────────────────────────────────────────────
+quinn = { version = "0.11", features = ["rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
+
+# ── gRPC / tower ──────────────────────────────────────────────────────────────
+tonic = "0.12"
+prost = "0.13"
+tower = { version = "0.4", features = ["full"] }
+http = "1"
+
+# ── utilities ─────────────────────────────────────────────────────────────────
+bytes = "1"
+thiserror = "1"
+tracing = "0.1"
+futures = "0.3"
+pin-project-lite = "0.2"
+
+# ── observability ─────────────────────────────────────────────────────────────
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+prometheus = { version = "0.13", features = ["process"] }
+
+# ── dev / test ────────────────────────────────────────────────────────────────
+rcgen = "0.13"
+tokio-test = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }

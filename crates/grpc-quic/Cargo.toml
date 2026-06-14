@@ -1,0 +1,24 @@
+[package]
+name        = "grpc-quic"
+description = "Custom QUIC transport for tonic gRPC — replaces TCP with QUIC streams"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+keywords.workspace    = true
+categories.workspace  = true
+
+[dependencies]
+grpc-quic-transport = { path = "../grpc-quic-transport" }
+grpc-quic-client    = { path = "../grpc-quic-client" }
+grpc-quic-server    = { path = "../grpc-quic-server" }
+grpc-quic-metrics   = { path = "../grpc-quic-metrics", optional = true }
+grpc-quic-discovery = { path = "../grpc-quic-discovery", optional = true }
+
+[features]
+default  = []
+metrics  = ["dep:grpc-quic-metrics"]
+discovery = ["dep:grpc-quic-discovery"]
+full     = ["metrics", "discovery"]

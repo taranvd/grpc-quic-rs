@@ -1,0 +1,15 @@
+[package]
+name        = "grpc-quic-discovery"
+description = "Service discovery abstractions for grpc-quic"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+keywords.workspace    = true
+categories.workspace  = true
+
+[dependencies]
+thiserror   = { workspace = true }
+tracing     = { workspace = true }

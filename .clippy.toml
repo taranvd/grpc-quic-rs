@@ -1,0 +1,8 @@
+# Clippy configuration for grpc-quic
+# https://doc.rust-lang.org/clippy/configuration.html
+
+# Allow slightly longer lines in some cases (rustfmt handles formatting)
+too-many-lines-threshold = 120
+
+# Deny all clippy::pedantic items that are relevant to network code
+cognitive-complexity-threshold = 30
