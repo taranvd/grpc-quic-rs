@@ -24,7 +24,7 @@ futures    = { workspace = true }
 pin-project-lite = { workspace = true }
 
 [dev-dependencies]
-grpc-quic-transport = { path = "../grpc-quic-transport" }
+grpc-quic-transport = { path = "../grpc-quic-transport", version = "0.1.0" }
 rcgen    = { workspace = true }
 tokio    = { workspace = true }
 tokio-test = { workspace = true }

@@ -11,11 +11,11 @@ keywords.workspace    = true
 categories.workspace  = true
 
 [dependencies]
-grpc-quic-transport = { path = "../grpc-quic-transport" }
-grpc-quic-client    = { path = "../grpc-quic-client" }
-grpc-quic-server    = { path = "../grpc-quic-server" }
-grpc-quic-metrics   = { path = "../grpc-quic-metrics", optional = true }
-grpc-quic-discovery = { path = "../grpc-quic-discovery", optional = true }
+grpc-quic-transport = { path = "../grpc-quic-transport", version = "0.1.0" }
+grpc-quic-client    = { path = "../grpc-quic-client", version = "0.1.0" }
+grpc-quic-server    = { path = "../grpc-quic-server", version = "0.1.0" }
+grpc-quic-metrics   = { path = "../grpc-quic-metrics", version = "0.1.0", optional = true }
+grpc-quic-discovery = { path = "../grpc-quic-discovery", version = "0.1.0", optional = true }
 
 [features]
 default  = []
