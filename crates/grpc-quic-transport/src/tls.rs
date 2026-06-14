@@ -38,10 +38,17 @@ impl TlsConfig {
 
     /// Create a default client TLS configuration.
     ///
-    /// It configures the ALPN protocol to `grpc-quic` and uses a default cryptography provider.
+    /// It configures the ALPN protocol to `grpc-quic`, loads the standard
+    /// Mozilla root CA certificates via `webpki-roots`, and uses the default
+    /// `ring` cryptography provider.
     pub fn client_default() -> Self {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let root_store = rustls::RootCertStore::empty();
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(
+            webpki_roots::TLS_SERVER_ROOTS
+                .iter()
+                .cloned(),
+        );
         let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
