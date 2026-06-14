@@ -9,20 +9,28 @@ slow stream cannot stall others.
 ## Why a custom transport instead of using quinn directly?
 
 `quinn` provides raw QUIC streams but no gRPC integration. `grpc-quic-rs`
-bridges the gap by implementing `tower::Service`, which is the interface tonic
-expects. This lets existing tonic services switch to QUIC with zero code
-changes.
+bridges the gap by implementing HTTP/3 (via `h3` + `h3-quinn`) and exposing
+`tower::Service`, which is the interface tonic expects. This lets existing
+tonic services switch to QUIC with zero code changes.
 
-## Wire format: why a custom envelope instead of HTTP/3?
+## Why HTTP/3 instead of a custom envelope?
 
-HTTP/3 would add significant complexity (QPACK, server push, etc.) for no
-benefit in the gRPC use case. gRPC already handles framing at the HTTP/2 layer.
-We only need:
+The initial version of `grpc-quic-rs` used a custom wire format. After
+several rounds of development, the project was rewritten to use **real HTTP/3**
+(h3 v0.0.8 + h3-quinn v0.0.10) for these reasons:
 
-1. Path routing (the gRPC service/method name)
-2. Opaque byte forwarding
+1. **Standards compliance**: gRPC is defined to run over HTTP/2 or HTTP/3.
+   A custom envelope means every new team member must learn a bespoke protocol.
+2. **h3 handles framing**: pseudo-headers (`:method`, `:path`, `:authority`),
+   data frames, and trailers map exactly to gRPC's needs — no need to reinvent.
+3. **Ecosystem interop**: tools and middleware that understand HTTP/3 can
+   inspect or proxy gRPC-quic traffic.
+4. **Trailers built-in**: h3 has first-class support for trailers, which
+   carry `grpc-status` and `grpc-message`. No manual trailer framing needed.
 
-A simple `[u16 path_len][path_bytes][payload]` header is sufficient.
+The `h3` and `h3-quinn` crates from the hyperium ecosystem provide a thin,
+async-friendly HTTP/3 layer on top of quinn — no QPACK or server push complexity
+is exposed when we don't need it.
 
 ## Connection Pooling
 

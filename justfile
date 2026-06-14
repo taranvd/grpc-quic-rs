@@ -70,7 +70,7 @@ bench-latency:
     cargo bench -p grpc-quic-benches --bench quic_latency --bench tcp_latency
 
 # Run loss-simulation benchmark (Linux only, requires tc/netem)
-bench-loss: scripts/netem.sh
+bench-loss:
     scripts/netem.sh on lo 5
     cargo bench -p grpc-quic-benches --bench loss_sim
     scripts/netem.sh off lo

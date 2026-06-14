@@ -52,10 +52,10 @@ let response = client.my_method(request).await?;
 
 ```bash
 # Terminal 1: start the server
-cargo run --example streaming-server
+cargo run -p grpc-quic-examples --bin streaming-server
 
 # Terminal 2: run the client
-cargo run --example streaming-client
+cargo run -p grpc-quic-examples --bin streaming-client
 ```
 
 The server generates a self-signed `cert.der` that the client reads automatically.

@@ -1,6 +1,6 @@
 # grpc-quic-rs
 
-> **Custom QUIC transport for tonic gRPC** — replaces HTTP/TCP with QUIC streams while preserving full gRPC semantics.
+> **gRPC over HTTP/3 over QUIC for tonic** — replaces HTTP/TCP with standards-compliant HTTP/3 (h3) over QUIC while preserving full gRPC semantics.
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -40,19 +40,22 @@ flowchart TB
     subgraph grpc-quic-rs
         C[grpc-quic-client<br/>QuicChannel]
         V[grpc-quic-server<br/>QuicServer]
+        K[grpc-quic-core<br/>h3 transport + body]
         T[grpc-quic-transport<br/>QUIC primitives]
         M[grpc-quic-metrics<br/>Prometheus + tracing]
         D[grpc-quic-discovery<br/>Resolver trait]
     end
 
     subgraph Network
-        Q[quinn · QUIC · UDP<br/>TLS 1.3 via rustls]
+        H[HTTP/3 · h3 + h3-quinn]
+        Q[QUIC · quinn · UDP<br/>TLS 1.3 via rustls]
     end
 
     S --> C
     S --> V
-    C --> T
-    V --> T
+    C --> K
+    V --> K
+    K --> T
     T --> Q
     C -.-> M
     V -.-> M
@@ -62,7 +65,7 @@ flowchart TB
 ### Key design principle
 
 > **grpc-quic-rs does NOT modify gRPC semantics.**
-> It only replaces the transport layer (TCP → QUIC).
+> It replaces HTTP/2/TCP with HTTP/3/QUIC (h3 + h3-quinn).
 > All gRPC payload bytes are forwarded verbatim — never interpreted or re-encoded.
 
 ### Crate structure
@@ -71,6 +74,7 @@ flowchart TB
 |---|---|
 | `grpc-quic` | Public façade — re-exports everything |
 | `grpc-quic-transport` | Raw QUIC primitives (quinn + rustls). No tonic dependency. |
+| `grpc-quic-core` | HTTP/3 + gRPC core — h3 connection builders, body adapters, error types |
 | `grpc-quic-client` | `QuicChannel` — tonic-compatible `tower::Service` |
 | `grpc-quic-server` | `QuicServer` — accepts QUIC connections, delegates to tonic Router |
 | `grpc-quic-metrics` | Prometheus counters + tracing spans |
@@ -106,14 +110,14 @@ QuicServer::builder()
 
 ## Streaming support
 
-All four gRPC streaming modes are supported:
+All four gRPC streaming modes are supported via HTTP/3 data frames + trailers:
 
-| Mode | QUIC mapping |
+| Mode | Transport |
 |---|---|
-| Unary | 1 bi-directional stream, half-closed after request |
-| Client Streaming | 1 bi-directional stream, client writes N messages |
-| Server Streaming | 1 bi-directional stream, server writes N messages |
-| Bidirectional | 1 bi-directional stream, both sides write concurrently |
+| Unary | HTTP/3 request/response with trailers (grpc-status, grpc-message) |
+| Client Streaming | HTTP/3 request stream, single response |
+| Server Streaming | Single request, HTTP/3 response stream |
+| Bidirectional | Full-duplex HTTP/3 stream |
 
 ---
 
@@ -127,7 +131,8 @@ All four gRPC streaming modes are supported:
 - [x] **Phase 6** — Prometheus metrics + tracing spans
 - [x] **Phase 7** — Service discovery (Resolver trait + StaticResolver)
 - [x] **Phase 8** — mdbook documentation + rustdoc
-- [ ] **Phase 9** — Criterion benchmarks (vs tonic/TCP baseline)
+- [x] **Phase 9** — Criterion benchmarks (QUIC vs TCP/tonic baseline)
+- [x] **Phase 10** — Rewrite to HTTP/3 (h3 + h3-quinn), remove custom wire format
 
 ---
 

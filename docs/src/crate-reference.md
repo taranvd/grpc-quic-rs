@@ -1,5 +1,18 @@
 # Crate Reference
 
+## `grpc-quic-core`
+
+HTTP/3 + gRPC core layer — h3 connection builders, body adapters, error types.
+
+**Key types:**
+
+| Type | Description |
+|---|---|
+| `H3ClientSession` | Cloneable HTTP/3 client session (Arc\<Mutex\<SendRequest>>) with background `poll_close` driver |
+| `ServerRecvBody` | `http_body::Body<Data=Bytes>` wrapping an h3 server `RecvStream` |
+| `ClientRecvBody` | `http_body::Body<Data=Bytes>` wrapping an h3 client `RecvStream` |
+| `CoreError` | Error type bridging h3 stream/connection errors |
+
 ## `grpc-quic-transport`
 
 Low-level QUIC primitives wrapping `quinn` and `rustls`. No tonic dependency.
@@ -15,8 +28,8 @@ Low-level QUIC primitives wrapping `quinn` and `rustls`. No tonic dependency.
 
 ## `grpc-quic-client`
 
-`QuicChannel` — a `tower::Service` adapter that makes QUIC streams look like
-an HTTP/2 transport to tonic.
+`QuicChannel` — a `tower::Service` adapter that makes HTTP/3-over-QUIC streams
+look like an HTTP transport to tonic.
 
 **Key types:**
 
@@ -39,7 +52,7 @@ tonic service.
 |---|---|
 | `QuicServer` | Server with graceful shutdown via `serve_with_shutdown()` |
 | `QuicServerBuilder` | Builder for `QuicServer` with TLS and stream limits |
-| `QuicRequestBody` | `http_body::Body` implementation reading from `RecvStream` |
+| `ServerRecvBody` | `http_body::Body<Data=Bytes>` bridging h3 `RecvStream` to tonic |
 | `ServerError` | Error enum: transport, invalid request, I/O, shutdown |
 
 ## `grpc-quic-metrics`
