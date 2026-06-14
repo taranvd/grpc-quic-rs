@@ -39,8 +39,13 @@ impl ConnectionPool {
     {
         let mut map = self.inner.lock().await;
         if let Some(conn) = map.get(&addr) {
-            debug!(remote = %addr, "reusing existing QUIC connection");
-            return Ok(conn.clone());
+            if conn.is_closed() {
+                debug!(remote = %addr, "cached connection is closed, removing");
+                map.remove(&addr);
+            } else {
+                debug!(remote = %addr, "reusing existing QUIC connection");
+                return Ok(conn.clone());
+            }
         }
         let conn = connect_fn(addr).await?;
         record_connection("client");

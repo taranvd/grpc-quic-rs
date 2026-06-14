@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tls_config = generate_and_save_certs();
     let addr: SocketAddr = "127.0.0.1:50051".parse()?;
     
-    let service = MyStreamingService::default();
+    let service = MyStreamingService;
     let server = grpc_quic::server::QuicServer::builder()
         .tls(tls_config)
         .build();

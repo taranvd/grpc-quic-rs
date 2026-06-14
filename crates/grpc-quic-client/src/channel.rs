@@ -26,7 +26,7 @@ use std::pin::Pin;
 use tokio::io::AsyncRead;
 use quinn::RecvStream;
 
-use grpc_quic_metrics::{record_stream, record_request, record_bytes_sent, record_bytes_received};
+use grpc_quic_metrics::{record_stream, record_request, record_bytes_sent, record_bytes_received, record_reconnect};
 use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
@@ -107,6 +107,18 @@ impl std::fmt::Debug for QuicResponseBody {
     }
 }
 
+/// Collect the entire body into a single `Bytes` buffer.
+async fn body_to_bytes(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientError> {
+    let mut buf = BytesMut::new();
+    while let Some(frame_res) = futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+        let frame = frame_res.map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
+        if let Ok(data) = frame.into_data() {
+            buf.extend_from_slice(&data);
+        }
+    }
+    Ok(buf.freeze())
+}
+
 impl QuicResponseBody {
     pub(crate) fn new(recv: RecvStream) -> Self {
         Self {
@@ -154,56 +166,54 @@ impl http_body::Body for QuicResponseBody {
         }
 
         // 2. Parse frames from `buf`
-        loop {
-            let n = this.buf.len();
+        let n = this.buf.len();
 
-            // Check if we have the trailers block (only when eof is true and it's the only thing left)
-            if this.eof && n >= 6 {
-                let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
-                let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
-                if 6 + msg_len == n {
-                    let msg_bytes = this.buf[6..6+msg_len].to_vec();
-                    let msg = String::from_utf8(msg_bytes)
-                        .unwrap_or_else(|_| "invalid utf-8 message".to_string());
-                    this.buf.clear();
+        // Check if we have the trailers block (only when eof is true and it's the only thing left)
+        if this.eof && n >= 6 {
+            let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
+            let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
+            if 6 + msg_len == n {
+                let msg_bytes = this.buf[6..6+msg_len].to_vec();
+                let msg = String::from_utf8(msg_bytes)
+                    .unwrap_or_else(|_| "invalid utf-8 message".to_string());
+                this.buf.clear();
 
-                    let mut trailers = http::HeaderMap::new();
-                    trailers.insert("grpc-status", http::HeaderValue::from_str(&status.to_string()).unwrap());
-                    if !msg.is_empty() {
-                        trailers.insert("grpc-message", http::HeaderValue::from_str(&msg).unwrap());
-                    }
-                    return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
+                let mut trailers = http::HeaderMap::new();
+                trailers.insert("grpc-status", http::HeaderValue::from_str(&status.to_string()).unwrap());
+                if !msg.is_empty() {
+                    trailers.insert("grpc-message", http::HeaderValue::from_str(&msg).unwrap());
                 }
+                return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
             }
-
-            // Otherwise, try to parse a gRPC frame
-            if n >= 5 {
-                let len = u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
-                let total_len = 5 + len;
-
-                if n >= total_len {
-                    let data = this.buf.split_to(total_len).freeze();
-                    return Poll::Ready(Some(Ok(Frame::data(data))));
-                } else if this.eof {
-                    return Poll::Ready(Some(Err(ClientError::InvalidResponse(
-                        "truncated gRPC frame".into()
-                    ))));
-                } else {
-                    return Poll::Pending;
-                }
-            }
-
-            if this.eof {
-                if n > 0 {
-                    return Poll::Ready(Some(Err(ClientError::InvalidResponse(
-                        format!("trailing garbage bytes at end of stream: {n} bytes")
-                    ))));
-                }
-                return Poll::Ready(None);
-            }
-
-            return Poll::Pending;
         }
+
+        // Otherwise, try to parse a gRPC frame
+        if n >= 5 {
+            let len = u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
+            let total_len = 5 + len;
+
+            if n >= total_len {
+                let data = this.buf.split_to(total_len).freeze();
+                return Poll::Ready(Some(Ok(Frame::data(data))));
+            } else if this.eof {
+                return Poll::Ready(Some(Err(ClientError::InvalidResponse(
+                    "truncated gRPC frame".into()
+                ))));
+            } else {
+                return Poll::Pending;
+            }
+        }
+
+        if this.eof {
+            if n > 0 {
+                return Poll::Ready(Some(Err(ClientError::InvalidResponse(
+                    format!("trailing garbage bytes at end of stream: {n} bytes")
+                ))));
+            }
+            return Poll::Ready(None);
+        }
+
+        Poll::Pending
     }
 }
 
@@ -246,7 +256,6 @@ pub struct QuicChannel {
     remote: SocketAddr,
     server_name: String,
     tls: Option<TlsConfig>,
-    #[allow(dead_code)] // used in Phase 4
     retry: RetryPolicy,
     pool: ConnectionPool,
 }
@@ -279,6 +288,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
         let server_name = self.server_name.clone();
         let tls = self.tls.clone();
         let pool = self.pool.clone();
+        let retry = self.retry.clone();
 
         trace!(
             remote = %remote,
@@ -287,65 +297,94 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
         );
 
         Box::pin(async move {
-            // 1. Get connection from pool
-            let tls_config = tls.unwrap_or_else(TlsConfig::client_default);
-            let conn = pool.get_or_connect(remote, move |addr| async move {
-                let endpoint = grpc_quic_transport::QuicEndpoint::client(tls_config)?;
-                let conn = endpoint.connect(addr, &server_name).await?;
-                Ok(conn)
-            }).await?;
+            let path = req.uri().path().to_owned();
+            // Reconstruct the body since we may need multiple attempts
+            let (_, body) = req.into_parts();
+            let body_bytes = body_to_bytes(body).await?;
 
-            // 2. Open bidirectional stream
-            let (mut send, recv) = conn.open_bi().await
-                .map_err(ClientError::Transport)?;
-            record_stream("client");
-
-            // 3. Write request header: path length (2 bytes BE) + path bytes
-            let path = req.uri().path();
-            let path_len = path.len();
-            if path_len > u16::MAX as usize {
-                return Err(ClientError::InvalidResponse(format!("request path too long: {path_len}")));
+            // Check path length once
+            if path.len() > u16::MAX as usize {
+                return Err(ClientError::InvalidResponse(format!("request path too long: {}", path.len())));
             }
-            
-            record_request("client", path);
 
-            let mut header_buf = Vec::with_capacity(2 + path_len);
-            header_buf.extend_from_slice(&(path_len as u16).to_be_bytes());
-            header_buf.extend_from_slice(path.as_bytes());
-            
-            send.write_all(&header_buf).await
-                .map_err(|e| ClientError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-            record_bytes_sent("client", (2 + path_len) as u64);
+            let mut last_error = None;
 
-            // 4. Stream request body frames (verbatim from tonic)
-            let mut body = req.into_body();
-            while let Some(frame_res) = futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-                let frame = frame_res.map_err(|e| ClientError::StreamIo(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))?;
-                
-                if let Ok(data) = frame.into_data() {
-                    use bytes::Buf;
-                    let mut data = data;
-                    while data.has_remaining() {
-                        let chunk = data.chunk();
-                        send.write_all(chunk).await
-                            .map_err(|e| ClientError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-                        let len = chunk.len() as u64;
-                        record_bytes_sent("client", len);
-                        data.advance(len as usize);
-                    }
+            for attempt in 0..retry.max_attempts {
+                if attempt > 0 {
+                    record_reconnect();
+                    let backoff = retry.backoff_for(attempt - 1);
+                    trace!(attempt, backoff = ?backoff, "retrying gRPC call");
+                    tokio::time::sleep(backoff).await;
                 }
+
+                let tls_config = tls.clone().unwrap_or_else(TlsConfig::client_default);
+                let conn = match pool.get_or_connect(remote, |addr| {
+                    let tls_config = tls_config.clone();
+                    let server_name = server_name.clone();
+                    async move {
+                        let endpoint = grpc_quic_transport::QuicEndpoint::client(tls_config)?;
+                        let conn = endpoint.connect(addr, &server_name).await?;
+                        Ok(conn)
+                    }
+                }).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        last_error = Some(e);
+                        pool.remove(&remote).await;
+                        continue;
+                    }
+                };
+
+                // 2. Open bidirectional stream
+                let (mut send, recv) = match conn.open_bi().await {
+                    Ok(pair) => {
+                        record_stream("client");
+                        pair
+                    }
+                    Err(e) => {
+                        last_error = Some(ClientError::Transport(e));
+                        pool.remove(&remote).await;
+                        continue;
+                    }
+                };
+
+                record_request("client", &path);
+
+                // 3. Write request header + body
+                let mut header_buf = Vec::with_capacity(2 + path.len());
+                header_buf.extend_from_slice(&(path.len() as u16).to_be_bytes());
+                header_buf.extend_from_slice(path.as_bytes());
+
+                if let Err(e) = send.write_all(&header_buf).await {
+                    let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
+                    last_error = Some(io_err);
+                    continue;
+                }
+                record_bytes_sent("client", (2 + path.len()) as u64);
+
+                if let Err(e) = send.write_all(&body_bytes).await {
+                    let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
+                    last_error = Some(io_err);
+                    continue;
+                }
+                record_bytes_sent("client", body_bytes.len() as u64);
+
+                // 4. Close writing side
+                if let Err(e) = send.finish() {
+                    let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
+                    last_error = Some(io_err);
+                    continue;
+                }
+
+                // 5. Build response
+                let resp = http::Response::new(QuicResponseBody::new(recv));
+                return Ok(resp);
             }
 
-            // 5. Close writing side of the stream
-            send.finish()
-                .map_err(|e| ClientError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-
-            // 6. Wrap recv stream into response body
-            let resp_body = QuicResponseBody::new(recv);
-            Ok(http::Response::new(resp_body))
+            Err(last_error.unwrap_or_else(|| ClientError::RetriesExhausted {
+                attempts: retry.max_attempts,
+                last_error: "no error captured".into(),
+            }))
         })
     }
 }

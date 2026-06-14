@@ -60,4 +60,9 @@ impl QuicConnection {
         self.inner
             .close(quinn::VarInt::from_u32(error_code), reason);
     }
+
+    /// Returns `true` if the connection has been closed (locally or remotely).
+    pub fn is_closed(&self) -> bool {
+        self.inner.close_reason().is_some()
+    }
 }

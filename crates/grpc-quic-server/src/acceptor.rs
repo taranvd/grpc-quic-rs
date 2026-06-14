@@ -106,10 +106,7 @@ where
     let mut has_trailers = false;
     
     while let Some(frame_res) = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await {
-        let frame = frame_res.map_err(|e| ServerError::StreamIo(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.into().to_string(),
-        )))?;
+        let frame = frame_res.map_err(|e| ServerError::StreamIo(std::io::Error::other(e.into().to_string())))?;
         
         match frame.into_data() {
             Ok(mut data) => {
@@ -117,7 +114,7 @@ where
                 while data.has_remaining() {
                     let chunk = data.chunk();
                     send.write_all(chunk).await
-                        .map_err(|e| ServerError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                        .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.to_string())))?;
                     let len = chunk.len() as u64;
                     record_bytes_sent("server", len);
                     data.advance(len as usize);
@@ -138,7 +135,7 @@ where
         write_trailers(&mut send, 0, "").await?;
     }
 
-    send.finish().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    send.finish().map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(())
 }
 
@@ -178,6 +175,6 @@ async fn write_trailers(
     buf.extend_from_slice(msg_bytes);
     
     send.write_all(&buf).await
-        .map_err(|e| ServerError::StreamIo(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.to_string())))?;
     Ok(())
 }
