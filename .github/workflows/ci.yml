@@ -67,5 +67,12 @@ jobs:
       - name: Check loss-simulation bench compiles (Linux-only, requires features)
         run: cargo check -p grpc-quic-benches --features loss-sim --benches
 
+      - name: Apply 5% packet loss on lo (for loss bench)
+        run: sudo tc qdisc add dev lo root netem loss 5%
+
       - name: Run loss bench (quick smoke-test under loss)
         run: cargo bench -p grpc-quic-benches --features loss-sim --bench loss_bench -- --quick
+
+      - name: Remove packet loss on lo
+        if: always()
+        run: sudo tc qdisc del dev lo root

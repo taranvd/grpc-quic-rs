@@ -22,9 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use futures::future::join_all;
 use tokio::runtime::Runtime;
 
@@ -161,59 +159,61 @@ fn setup_servers(rt: &Runtime, server_tls: TlsConfig) -> BenchServers {
 
 // ── tc (netem) guard ─────────────────────────────────────────────────────────
 
+/// Runs `tc` (or `sudo tc`) with the given args, returns success.
+fn tc(args: &[&str]) -> bool {
+    let run = |cmd: &str| -> Option<std::process::Output> {
+        std::process::Command::new(cmd).args(args).output().ok()
+    };
+    if let Some(ref o) = run("tc") {
+        if o.status.success() {
+            return true;
+        }
+        // Retry with sudo if direct call failed (e.g. CI without CAP_NET_ADMIN)
+        if let Some(ref o) = run("sudo") {
+            if o.status.success() {
+                return true;
+            }
+        }
+        eprintln!("[tc] warning: {}", String::from_utf8_lossy(&o.stderr));
+    } else {
+        eprintln!("[tc] binary not found");
+    }
+    false
+}
+
 /// Applies `tc` packet loss on `lo` and restores it on drop.
 struct TcGuard {
     iface: String,
+    active: bool,
 }
 
 impl TcGuard {
     fn new(iface: &str, loss_percent: u32) -> Self {
-        let guard = Self {
-            iface: iface.to_string(),
-        };
-        let out = std::process::Command::new("tc")
-            .args([
-                "qdisc",
-                "add",
-                "dev",
-                iface,
-                "root",
-                "netem",
-                "loss",
-                &loss_percent.to_string(),
-            ])
-            .output();
-        match out {
-            Ok(o) if o.status.success() => {
-                eprintln!(
-                    "[tc] {}% loss on {} (OK)",
-                    loss_percent, iface
-                );
-            }
-            Ok(o) => eprintln!(
-                "[tc] add warning: {}",
-                String::from_utf8_lossy(&o.stderr)
-            ),
-            Err(e) => eprintln!("[tc] binary not found: {e}"),
+        let ok = tc(&[
+            "qdisc",
+            "add",
+            "dev",
+            iface,
+            "root",
+            "netem",
+            "loss",
+            &loss_percent.to_string(),
+        ]);
+        if ok {
+            eprintln!("[tc] {}% loss on {}", loss_percent, iface);
         }
-        guard
+        Self {
+            iface: iface.to_string(),
+            active: ok,
+        }
     }
 }
 
 impl Drop for TcGuard {
     fn drop(&mut self) {
-        let out = std::process::Command::new("tc")
-            .args(["qdisc", "del", "dev", &self.iface, "root"])
-            .output();
-        match out {
-            Ok(o) if o.status.success() => {
-                eprintln!("[tc] restored {} (OK)", self.iface);
-            }
-            Ok(o) => eprintln!(
-                "[tc] restore warning: {}",
-                String::from_utf8_lossy(&o.stderr)
-            ),
-            Err(e) => eprintln!("[tc] binary not found: {e}"),
+        if self.active {
+            tc(&["qdisc", "del", "dev", &self.iface, "root"]);
+            eprintln!("[tc] restored {}", self.iface);
         }
     }
 }
@@ -257,10 +257,7 @@ fn bench_loss(c: &mut Criterion) {
             .clone()
             .unary(tonic::Request::new(w.clone()))
             .await;
-        let _ = tcp_client
-            .clone()
-            .unary(tonic::Request::new(w))
-            .await;
+        let _ = tcp_client.clone().unary(tonic::Request::new(w)).await;
     });
 
     // ── Enable packet loss ──────────────────────────────────────────────
@@ -280,30 +277,26 @@ fn bench_loss(c: &mut Criterion) {
         group.sample_size(30);
         for &conc in CONCURRENCY {
             group.throughput(Throughput::Bytes((PAYLOAD_SIZE * conc) as u64));
-            group.bench_with_input(
-                BenchmarkId::new("concurrent", conc),
-                &conc,
-                |b, &conc| {
-                    let client = quic_client.clone();
-                    let payload = payload.clone();
-                    b.iter(|| {
-                        rt.block_on(async {
-                            let futures: Vec<_> = (0..conc)
-                                .map(|_| {
-                                    let mut c = client.clone();
-                                    let p = payload.clone();
-                                    async move {
-                                        let req = tonic::Request::new(p);
-                                        c.unary(req).await.unwrap()
-                                    }
-                                })
-                                .collect();
-                            let results = join_all(futures).await;
-                            black_box(results);
-                        });
+            group.bench_with_input(BenchmarkId::new("concurrent", conc), &conc, |b, &conc| {
+                let client = quic_client.clone();
+                let payload = payload.clone();
+                b.iter(|| {
+                    rt.block_on(async {
+                        let futures: Vec<_> = (0..conc)
+                            .map(|_| {
+                                let mut c = client.clone();
+                                let p = payload.clone();
+                                async move {
+                                    let req = tonic::Request::new(p);
+                                    c.unary(req).await.unwrap()
+                                }
+                            })
+                            .collect();
+                        let results = join_all(futures).await;
+                        black_box(results);
                     });
-                },
-            );
+                });
+            });
         }
         group.finish();
     }
@@ -315,30 +308,26 @@ fn bench_loss(c: &mut Criterion) {
         group.sample_size(30);
         for &conc in CONCURRENCY {
             group.throughput(Throughput::Bytes((PAYLOAD_SIZE * conc) as u64));
-            group.bench_with_input(
-                BenchmarkId::new("concurrent", conc),
-                &conc,
-                |b, &conc| {
-                    let client = tcp_client.clone();
-                    let payload = payload.clone();
-                    b.iter(|| {
-                        rt.block_on(async {
-                            let futures: Vec<_> = (0..conc)
-                                .map(|_| {
-                                    let mut c = client.clone();
-                                    let p = payload.clone();
-                                    async move {
-                                        let req = tonic::Request::new(p);
-                                        c.unary(req).await.unwrap()
-                                    }
-                                })
-                                .collect();
-                            let results = join_all(futures).await;
-                            black_box(results);
-                        });
+            group.bench_with_input(BenchmarkId::new("concurrent", conc), &conc, |b, &conc| {
+                let client = tcp_client.clone();
+                let payload = payload.clone();
+                b.iter(|| {
+                    rt.block_on(async {
+                        let futures: Vec<_> = (0..conc)
+                            .map(|_| {
+                                let mut c = client.clone();
+                                let p = payload.clone();
+                                async move {
+                                    let req = tonic::Request::new(p);
+                                    c.unary(req).await.unwrap()
+                                }
+                            })
+                            .collect();
+                        let results = join_all(futures).await;
+                        black_box(results);
                     });
-                },
-            );
+                });
+            });
         }
         group.finish();
     }
