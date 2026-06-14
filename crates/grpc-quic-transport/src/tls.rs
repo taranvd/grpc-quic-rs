@@ -36,6 +36,22 @@ impl TlsConfig {
         }
     }
 
+    /// Create a default client TLS configuration.
+    ///
+    /// It configures the ALPN protocol to `grpc-quic` and uses a default cryptography provider.
+    pub fn client_default() -> Self {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let root_store = rustls::RootCertStore::empty();
+        let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        client_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+        
+        Self::client(client_crypto)
+    }
+
     /// Return the inner server config, or an error if this is a client config.
     pub fn server_config(&self) -> Result<Arc<ServerConfig>, TransportError> {
         match &self.inner {
