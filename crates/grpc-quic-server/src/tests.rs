@@ -264,8 +264,7 @@ async fn test_large_payload() {
         let mut body = req.into_body();
         let mut received = Vec::new();
         loop {
-            let frame =
-                futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
+            let frame = futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
             match frame {
                 Some(Ok(frame)) => {
                     if let Ok(data) = frame.into_data() {
@@ -325,8 +324,7 @@ async fn test_large_payload() {
     let mut resp_body = response.into_body();
     let mut result = Vec::new();
     loop {
-        let frame =
-            futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
+        let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
         match frame {
             Some(Ok(frame)) => {
                 if let Ok(data) = frame.into_data() {
