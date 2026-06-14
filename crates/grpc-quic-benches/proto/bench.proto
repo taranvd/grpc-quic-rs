@@ -1,0 +1,10 @@
+syntax = "proto3";
+package bench;
+
+service BenchService {
+  rpc Unary (Payload) returns (Payload);
+}
+
+message Payload {
+  bytes body = 1;
+}
