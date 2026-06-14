@@ -126,7 +126,12 @@ fn bench_loss(c: &mut Criterion) {
 
             let hist = take_histogram();
             reports.push(BenchResult::new(
-                "tcp", "loss_sim", conc, loss, PAYLOAD_SIZE, &hist,
+                "tcp",
+                "loss_sim",
+                conc,
+                loss,
+                PAYLOAD_SIZE,
+                &hist,
             ));
         }
         group.finish();
