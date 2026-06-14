@@ -50,8 +50,6 @@ fn bench_loss(c: &mut Criterion) {
     {
         let mut reports = Vec::new();
         let mut group = c.benchmark_group("quic_loss");
-        group.measurement_time(Duration::from_secs(15));
-        group.sample_size(30);
 
         for &conc in CONCURRENCY {
             group.throughput(Throughput::Bytes((PAYLOAD_SIZE * conc) as u64));
@@ -96,8 +94,6 @@ fn bench_loss(c: &mut Criterion) {
     {
         let mut reports = Vec::new();
         let mut group = c.benchmark_group("tcp_loss");
-        group.measurement_time(Duration::from_secs(15));
-        group.sample_size(30);
 
         for &conc in CONCURRENCY {
             group.throughput(Throughput::Bytes((PAYLOAD_SIZE * conc) as u64));

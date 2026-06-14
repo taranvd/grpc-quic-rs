@@ -6,8 +6,8 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use tokio::runtime::Runtime;
 
 use grpc_quic_benches::{
-    make_payload, make_tcp_client, make_tls_configs, record_latency, setup_servers,
-    shutdown_servers, take_histogram, BenchResult, PAYLOAD_SIZES,
+    bench_sizes, make_payload, make_tcp_client, make_tls_configs, record_latency, setup_servers,
+    shutdown_servers, take_histogram, BenchResult,
 };
 
 fn bench_tcp_latency(c: &mut Criterion) {
@@ -27,10 +27,8 @@ fn bench_tcp_latency(c: &mut Criterion) {
 
     let mut reports = Vec::new();
 
-    for &size in PAYLOAD_SIZES {
+    for &size in bench_sizes() {
         let mut group = c.benchmark_group("tcp_latency");
-        group.measurement_time(Duration::from_secs(10));
-        group.sample_size(50);
         group.throughput(Throughput::Bytes(size as u64));
 
         let mut client = tcp_client.clone();

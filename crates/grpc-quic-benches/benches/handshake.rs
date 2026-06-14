@@ -18,8 +18,6 @@ fn bench_handshake(c: &mut Criterion) {
     let quic_addr = servers.quic_addr;
 
     let mut qg = c.benchmark_group("quic_handshake");
-    qg.measurement_time(Duration::from_secs(10));
-    qg.sample_size(50);
     qg.bench_function("connect", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -35,8 +33,6 @@ fn bench_handshake(c: &mut Criterion) {
     qg.finish();
 
     let mut tg = c.benchmark_group("tcp_handshake");
-    tg.measurement_time(Duration::from_secs(10));
-    tg.sample_size(50);
     tg.bench_function("connect", |b| {
         b.iter(|| {
             rt.block_on(async {
