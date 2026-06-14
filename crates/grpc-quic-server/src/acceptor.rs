@@ -1,197 +1,86 @@
-//! Stream acceptor — reads a QUIC bi-stream, reconstructs the gRPC request,
-//! and dispatches it to the tonic service handler.
-
 use crate::error::ServerError;
 use bytes::Bytes;
-use grpc_quic_metrics::{record_bytes_received, record_bytes_sent, record_request, record_stream};
-use http_body::{Body, Frame};
-use quinn::{RecvStream, SendStream};
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use grpc_quic_core::body::ServerRecvBody;
+use grpc_quic_metrics::{record_bytes_sent, record_request, record_stream};
+use http_body::Body;
+use tracing::error;
 
-/// Request body backed by a pre-buffered byte slice.
-pub struct QuicRequestBody {
-    buf: Bytes,
-    delivered: bool,
-}
-
-impl QuicRequestBody {
-    /// Create a new request body from pre-read bytes.
-    pub fn new(buf: Bytes) -> Self {
-        Self {
-            buf,
-            delivered: false,
-        }
-    }
-}
-
-impl Body for QuicRequestBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        let this = self.get_mut();
-        if this.delivered {
-            return Poll::Ready(None);
-        }
-        this.delivered = true;
-        if this.buf.is_empty() {
-            return Poll::Ready(None);
-        }
-        let data = std::mem::take(&mut this.buf);
-        Poll::Ready(Some(Ok(Frame::data(data))))
-    }
-}
-
-/// Handle a single bi-directional stream.
-#[tracing::instrument(skip(send, recv, service))]
-pub async fn handle_stream<S, B>(
-    mut send: SendStream,
-    mut recv: RecvStream,
+pub async fn handle_request<S>(
+    req: http::Request<()>,
+    stream: h3::server::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>,
     service: S,
 ) -> Result<(), ServerError>
 where
-    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
         + Clone
         + Send
         + Sync
         + 'static,
     S::Future: Send + 'static,
-    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    B: http_body::Body + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
 {
-    // 1. Read path length (2 bytes BE)
-    let mut path_len_buf = [0u8; 2];
-    recv.read_exact(&mut path_len_buf)
-        .await
-        .map_err(|e| ServerError::InvalidRequest(format!("failed to read path length: {e}")))?;
-    let path_len = u16::from_be_bytes(path_len_buf) as usize;
-
-    // 2. Read path (UTF-8 bytes)
-    let mut path_bytes = vec![0u8; path_len];
-    recv.read_exact(&mut path_bytes)
-        .await
-        .map_err(|e| ServerError::InvalidRequest(format!("failed to read path: {e}")))?;
-    let path = String::from_utf8(path_bytes)
-        .map_err(|e| ServerError::InvalidRequest(format!("path is not UTF-8: {e}")))?;
-
-    record_stream("server");
+    let path = req.uri().path().to_owned();
     record_request("server", &path);
+    record_stream("server");
 
-    // 3. Eagerly buffer the request body, then build request
-    const MAX_BODY_SIZE: usize = 128 * 1024;
-    let raw_body = recv
-        .read_to_end(MAX_BODY_SIZE)
-        .await
-        .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.to_string())))?;
-    let body_len = raw_body.len() as u64;
-    record_bytes_received("server", body_len);
-    let request_body = QuicRequestBody::new(Bytes::from(raw_body));
-    let box_body = tonic::body::boxed(request_body);
+    let (mut send, recv) = stream.split();
+    let recv_body = ServerRecvBody::new(recv);
+    let box_body = tonic::body::boxed(recv_body);
+
     let mut request = http::Request::new(box_body);
-    *request.uri_mut() = path
-        .parse()
-        .map_err(|e| ServerError::InvalidRequest(format!("invalid URI: {e}")))?;
-    *request.method_mut() = http::Method::POST;
-    request.headers_mut().insert(
-        http::header::CONTENT_TYPE,
-        http::header::HeaderValue::from_static("application/grpc"),
-    );
+    *request.method_mut() = req.method().clone();
+    *request.uri_mut() = req.uri().clone();
+    *request.headers_mut() = req.headers().clone();
 
-    // 4. Dispatch to tonic service
     let mut service = service;
-    futures::future::poll_fn(|cx| service.poll_ready(cx))
-        .await
-        .map_err(|e| ServerError::InvalidRequest(format!("service not ready: {:?}", e.into())))?;
-    let response = service
-        .call(request)
-        .await
-        .map_err(|e| ServerError::InvalidRequest(format!("service call failed: {:?}", e.into())))?;
+    let response = match service.call(request).await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("service call failed: {:?}", e.into());
+            let resp = http::Response::builder()
+                .status(500)
+                .body(())
+                .unwrap();
+            let _ = send.send_response(resp).await;
+            return Ok(());
+        }
+    };
 
-    // 5. Stream response frames
-    let body = response.into_body();
+    let (parts, body) = response.into_parts();
+    let resp = http::Response::from_parts(parts, ());
+    if let Err(e) = send.send_response(resp).await {
+        error!("failed to send response headers: {e}");
+        return Ok(());
+    }
+
     tokio::pin!(body);
-    let mut has_trailers = false;
-
-    while let Some(frame_res) = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await {
-        let frame = frame_res
-            .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.into().to_string())))?;
-
-        match frame.into_data() {
-            Ok(mut data) => {
-                use bytes::Buf;
-                while data.has_remaining() {
-                    let chunk = data.chunk();
-                    send.write_all(chunk)
-                        .await
-                        .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.to_string())))?;
-                    let len = chunk.len() as u64;
+    loop {
+        let frame = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx))
+            .await;
+        match frame {
+            Some(Ok(frame)) => {
+                if let Ok(data) = frame.into_data() {
+                    let len = data.len() as u64;
+                    if let Err(e) = send.send_data(data).await {
+                        error!("failed to send data: {e}");
+                        break;
+                    }
                     record_bytes_sent("server", len);
-                    data.advance(len as usize);
                 }
             }
-            Err(frame) => {
-                if let Ok(trailers) = frame.into_trailers() {
-                    has_trailers = true;
-                    let (status, message) = parse_trailers(&trailers);
-                    write_trailers(&mut send, status, &message).await?;
-                    break;
+            Some(Err(e)) => {
+                error!("response body error: {e}");
+                break;
+            }
+            None => {
+                if let Err(e) = send.finish().await {
+                    error!("failed to finish stream: {e}");
                 }
+                return Ok(());
             }
         }
     }
 
-    if !has_trailers {
-        write_trailers(&mut send, 0, "").await?;
-    }
-
-    send.finish()
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    Ok(())
-}
-
-fn parse_trailers(headers: &http::HeaderMap) -> (u32, String) {
-    let status = headers
-        .get("grpc-status")
-        .and_then(|val| val.to_str().ok())
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-
-    let message = headers
-        .get("grpc-message")
-        .and_then(|val| val.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-
-    (status, message)
-}
-
-async fn write_trailers(
-    send: &mut SendStream,
-    status: u32,
-    message: &str,
-) -> Result<(), ServerError> {
-    let msg_bytes = message.as_bytes();
-    let msg_len = msg_bytes.len();
-    if msg_len > u16::MAX as usize {
-        return Err(ServerError::StreamIo(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "grpc-message too long",
-        )));
-    }
-
-    let mut buf = Vec::with_capacity(4 + 2 + msg_len);
-    buf.extend_from_slice(&status.to_be_bytes());
-    buf.extend_from_slice(&(msg_len as u16).to_be_bytes());
-    buf.extend_from_slice(msg_bytes);
-
-    send.write_all(&buf)
-        .await
-        .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.to_string())))?;
+    let _ = send.finish().await;
     Ok(())
 }

@@ -2,6 +2,7 @@
 members = [
     "crates/grpc-quic",
     "crates/grpc-quic-transport",
+    "crates/grpc-quic-core",
     "crates/grpc-quic-client",
     "crates/grpc-quic-server",
     "crates/grpc-quic-metrics",
@@ -25,8 +26,10 @@ categories = ["network-programming", "asynchronous"]
 # ── async runtime ─────────────────────────────────────────────────────────────
 tokio = { version = "1", features = ["full"] }
 
-# ── QUIC ──────────────────────────────────────────────────────────────────────
+# ── QUIC / HTTP/3 ──────────────────────────────────────────────────────────
 quinn = { version = "0.11", features = ["rustls"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-pemfile = "2"
 

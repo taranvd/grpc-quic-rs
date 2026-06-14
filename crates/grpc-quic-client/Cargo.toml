@@ -11,6 +11,7 @@ keywords.workspace    = true
 categories.workspace  = true
 
 [dependencies]
+grpc-quic-core       = { path = "../grpc-quic-core" }
 grpc-quic-transport  = { path = "../grpc-quic-transport" }
 grpc-quic-metrics    = { path = "../grpc-quic-metrics" }
 grpc-quic-discovery  = { path = "../grpc-quic-discovery" }

@@ -2,11 +2,14 @@ use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::pin::Pin;
 use tokio::sync::oneshot;
-use tower::service_fn;
+use tower::Service;
 
 use crate::QuicServer;
+use grpc_quic_client::QuicChannel;
+use grpc_quic_core::body::ClientRecvBody;
+use grpc_quic_core::client::H3ClientSession;
 use grpc_quic_transport::{QuicEndpoint, TlsConfig};
 
 fn make_tls_configs() -> (TlsConfig, TlsConfig) {
@@ -21,7 +24,7 @@ fn make_tls_configs() -> (TlsConfig, TlsConfig) {
         rustls::pki_types::PrivatePkcs8KeyDer::from(key_der),
     );
 
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
 
     let mut server_crypto = rustls::ServerConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -29,7 +32,7 @@ fn make_tls_configs() -> (TlsConfig, TlsConfig) {
         .with_no_client_auth()
         .with_single_cert(vec![server_cert.clone()], server_key)
         .unwrap();
-    server_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
     server_crypto.max_early_data_size = u32::MAX;
 
     let mut root_store = rustls::RootCertStore::empty();
@@ -40,7 +43,7 @@ fn make_tls_configs() -> (TlsConfig, TlsConfig) {
         .unwrap()
         .with_root_certificates(root_store)
         .with_no_client_auth();
-    client_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+    client_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     (
         TlsConfig::server(server_crypto),
@@ -48,17 +51,17 @@ fn make_tls_configs() -> (TlsConfig, TlsConfig) {
     )
 }
 
-struct TestResponseBody {
+struct TestBody {
     data: Option<Bytes>,
     trailers: Option<http::HeaderMap>,
 }
 
-impl http_body::Body for TestResponseBody {
+impl http_body::Body for TestBody {
     type Data = Bytes;
     type Error = std::convert::Infallible;
 
     fn poll_frame(
-        mut self: std::pin::Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         if let Some(data) = self.data.take() {
@@ -74,47 +77,40 @@ impl http_body::Body for TestResponseBody {
 #[tokio::test]
 async fn test_server_serve_and_dispatch() {
     let (server_tls, client_tls) = make_tls_configs();
-
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    // Create the mock service
-    let service = service_fn(|req: Request<tonic::body::BoxBody>| async move {
+    let service = tower::service_fn(|req: Request<tonic::body::BoxBody>| async move {
         assert_eq!(req.uri().path(), "/helloworld.Greeter/SayHello");
         assert_eq!(
             req.headers().get("content-type").unwrap(),
             "application/grpc"
         );
 
-        // Read request body to verify it
         let mut body = req.into_body();
-        let frame_res =
-            futures::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await;
-        let frame = frame_res.unwrap().unwrap();
+        let frame = futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx))
+            .await
+            .unwrap()
+            .unwrap();
         let data = frame.into_data().unwrap();
         assert_eq!(data.as_ref(), b"hello grpc-quic");
 
-        // Respond with data + trailers
         let mut trailers = http::HeaderMap::new();
         trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
-        trailers.insert("grpc-message", http::HeaderValue::from_static("Success"));
 
-        let body = TestResponseBody {
+        let body = TestBody {
             data: Some(Bytes::from_static(b"response bytes")),
             trailers: Some(trailers),
         };
 
-        Ok::<_, std::convert::Infallible>(Response::new(body))
+        Ok::<_, std::convert::Infallible>(Response::new(tonic::body::boxed(body)))
     });
 
-    // Start server in background
     let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let server = QuicServer::builder().tls(server_tls).build();
 
-    // Bind server endpoint so we can get its local port
     let endpoint = QuicEndpoint::server(server_addr, server.tls.clone().unwrap()).unwrap();
     let bound_addr = endpoint.local_addr().unwrap();
 
-    // Re-use connection/accept loop by spawning the serve_with_incoming_shutdown with a signal
     let server_handle = tokio::spawn(async move {
         let signal = async move {
             shutdown_rx.await.ok();
@@ -125,52 +121,51 @@ async fn test_server_serve_and_dispatch() {
             .unwrap();
     });
 
-    // Connect client
-    let client_endpoint = QuicEndpoint::client(client_tls).unwrap();
-    let conn = client_endpoint
-        .connect(bound_addr, "localhost")
+    let quic_conn = {
+        let client_endpoint = QuicEndpoint::client(client_tls).unwrap();
+        client_endpoint
+            .connect(bound_addr, "localhost")
+            .await
+            .unwrap()
+    };
+
+    let h3_session = H3ClientSession::new(quic_conn.get_ref().clone()).await.unwrap();
+
+    let req = http::Request::builder()
+        .method("POST")
+        .uri(format!("https://localhost:{}/helloworld.Greeter/SayHello", bound_addr.port()))
+        .header("content-type", "application/grpc")
+        .body(())
+        .unwrap();
+
+    let mut stream = h3_session.send_request(req).await.unwrap();
+
+    stream
+        .send_data(Bytes::from_static(b"hello grpc-quic"))
         .await
         .unwrap();
-    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    stream.finish().await.unwrap();
 
-    // Write request envelope
-    let path = "/helloworld.Greeter/SayHello";
-    let path_len = path.len() as u16;
-    let payload = b"hello grpc-quic";
+    let resp = stream.recv_response().await.unwrap();
+    assert_eq!(resp.status(), 200);
 
-    let mut req_buf = Vec::new();
-    req_buf.extend_from_slice(&path_len.to_be_bytes());
-    req_buf.extend_from_slice(path.as_bytes());
-    req_buf.extend_from_slice(payload);
+    let (_send_resp, recv_resp) = stream.split();
+    let mut resp_body = ClientRecvBody::new(recv_resp);
 
-    send.write_all(&req_buf).await.unwrap();
-    send.finish().unwrap();
+    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+        .await
+        .unwrap()
+        .unwrap();
+    let data = frame.into_data().unwrap();
+    assert_eq!(&data[..], b"response bytes");
 
-    // Read response
-    // Response envelope is: [response data][u32 grpc_status BE][u16 msg_len BE][msg_bytes]
-    // In our case, the response is exactly "response bytes" followed by the status block
-    let mut resp_buf = vec![0u8; 14];
-    recv.read_exact(&mut resp_buf).await.unwrap();
-    assert_eq!(&resp_buf, b"response bytes");
+    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+        .await
+        .unwrap()
+        .unwrap();
+    let trailers = frame.into_trailers().unwrap();
+    assert_eq!(trailers.get("grpc-status").unwrap(), "0");
 
-    // Read status (4 bytes)
-    let mut status_buf = [0u8; 4];
-    recv.read_exact(&mut status_buf).await.unwrap();
-    let status = u32::from_be_bytes(status_buf);
-    assert_eq!(status, 0);
-
-    // Read msg_len (2 bytes)
-    let mut msg_len_buf = [0u8; 2];
-    recv.read_exact(&mut msg_len_buf).await.unwrap();
-    let msg_len = u16::from_be_bytes(msg_len_buf) as usize;
-    assert_eq!(msg_len, 7);
-
-    // Read msg_bytes
-    let mut msg_buf = vec![0u8; msg_len];
-    recv.read_exact(&mut msg_buf).await.unwrap();
-    assert_eq!(&msg_buf, b"Success");
-
-    // Clean shutdown
     shutdown_tx.send(()).unwrap();
     server_handle.await.unwrap();
 }
@@ -180,37 +175,28 @@ async fn test_channel_end_to_end() {
     let (server_tls, client_tls) = make_tls_configs();
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    // Create the mock service
-    let service = service_fn(|req: Request<tonic::body::BoxBody>| async move {
+    let service = tower::service_fn(|req: Request<tonic::body::BoxBody>| async move {
         assert_eq!(req.uri().path(), "/helloworld.Greeter/SayHello");
 
-        // Read request body
         let mut body = req.into_body();
-        let frame_res =
-            futures::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx)).await;
-        let frame = frame_res.unwrap().unwrap();
+        let frame = futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx))
+            .await
+            .unwrap()
+            .unwrap();
         let data = frame.into_data().unwrap();
-        assert_eq!(data.len(), 5 + 13);
-        assert_eq!(&data[5..], b"hello channel");
+        assert_eq!(&data[..], b"hello channel");
 
         let mut trailers = http::HeaderMap::new();
         trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
-        trailers.insert("grpc-message", http::HeaderValue::from_static("Success"));
 
-        let payload = b"channel response";
-        let mut resp_bytes = vec![0u8; 5];
-        resp_bytes[4] = payload.len() as u8;
-        resp_bytes.extend_from_slice(payload);
-
-        let body = TestResponseBody {
-            data: Some(Bytes::from(resp_bytes)),
+        let body = TestBody {
+            data: Some(Bytes::from_static(b"channel response")),
             trailers: Some(trailers),
         };
 
-        Ok::<_, std::convert::Infallible>(Response::new(body))
+        Ok::<_, std::convert::Infallible>(Response::new(tonic::body::boxed(body)))
     });
 
-    // Start server in background
     let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let server = QuicServer::builder().tls(server_tls).build();
 
@@ -227,55 +213,37 @@ async fn test_channel_end_to_end() {
             .unwrap();
     });
 
-    // Create QuicChannel
-    use grpc_quic_client::QuicChannel;
-    use std::pin::Pin;
-    use tower::Service;
-
     let mut channel = QuicChannel::builder()
         .tls(client_tls)
         .connect(bound_addr.to_string())
         .await
         .unwrap();
 
-    // Build http::Request
-    let payload = b"hello channel";
-    let mut req_bytes = vec![0u8; 5];
-    req_bytes[4] = payload.len() as u8;
-    req_bytes.extend_from_slice(payload);
-
-    let req_body = tonic::body::boxed(TestResponseBody {
-        data: Some(Bytes::from(req_bytes)),
+    let body = TestBody {
+        data: Some(Bytes::from_static(b"hello channel")),
         trailers: None,
-    });
-    let mut request = http::Request::new(req_body);
+    };
+    let mut request = Request::new(tonic::body::boxed(body));
     *request.uri_mut() = "/helloworld.Greeter/SayHello".parse().unwrap();
 
-    // Call channel
     let response = channel.call(request).await.unwrap();
 
-    // Parse response body
     let mut resp_body = response.into_body();
 
-    // Read data frame
-    let frame_res = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
-    let frame = frame_res.unwrap().unwrap();
+    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+        .await
+        .unwrap()
+        .unwrap();
     let data = frame.into_data().unwrap();
-    assert_eq!(data.len(), 5 + 16);
-    assert_eq!(&data[5..], b"channel response");
+    assert_eq!(&data[..], b"channel response");
 
-    // Read trailers frame
-    let frame_res = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
-    let frame = frame_res.unwrap().unwrap();
+    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+        .await
+        .unwrap()
+        .unwrap();
     let trailers = frame.into_trailers().unwrap();
     assert_eq!(trailers.get("grpc-status").unwrap(), "0");
-    assert_eq!(trailers.get("grpc-message").unwrap(), "Success");
 
-    // Read EOF
-    let frame_res = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
-    assert!(frame_res.is_none());
-
-    // Clean shutdown
     shutdown_tx.send(()).unwrap();
     server_handle.await.unwrap();
 }
