@@ -11,8 +11,10 @@ pub async fn handle_request<S>(
     service: S,
 ) -> Result<(), ServerError>
 where
-    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
-        + Clone
+    S: tower::Service<
+            http::Request<tonic::body::BoxBody>,
+            Response = http::Response<tonic::body::BoxBody>,
+        > + Clone
         + Send
         + Sync
         + 'static,
@@ -37,10 +39,7 @@ where
         Ok(r) => r,
         Err(e) => {
             error!("service call failed: {:?}", e.into());
-            let resp = http::Response::builder()
-                .status(500)
-                .body(())
-                .unwrap();
+            let resp = http::Response::builder().status(500).body(()).unwrap();
             let _ = send.send_response(resp).await;
             return Ok(());
         }
@@ -56,30 +55,27 @@ where
     tokio::pin!(body);
     let mut data_frame_received = false;
     loop {
-        let frame = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx))
-            .await;
+        let frame = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await;
         match frame {
-            Some(Ok(frame)) => {
-                match frame.into_data() {
-                    Ok(data) => {
-                        data_frame_received = true;
-                        let len = data.len() as u64;
-                        if let Err(e) = send.send_data(data).await {
-                            error!("failed to send data: {e}");
-                            break;
-                        }
-                        record_bytes_sent("server", len);
+            Some(Ok(frame)) => match frame.into_data() {
+                Ok(data) => {
+                    data_frame_received = true;
+                    let len = data.len() as u64;
+                    if let Err(e) = send.send_data(data).await {
+                        error!("failed to send data: {e}");
+                        break;
                     }
-                    Err(frame) => {
-                        if let Ok(trailers) = frame.into_trailers() {
-                            if let Err(e) = send.send_trailers(trailers).await {
-                                error!("failed to send trailers: {e}");
-                            }
-                            return Ok(());
+                    record_bytes_sent("server", len);
+                }
+                Err(frame) => {
+                    if let Ok(trailers) = frame.into_trailers() {
+                        if let Err(e) = send.send_trailers(trailers).await {
+                            error!("failed to send trailers: {e}");
                         }
+                        return Ok(());
                     }
                 }
-            }
+            },
             Some(Err(e)) => {
                 error!("response body error: {e}");
                 break;

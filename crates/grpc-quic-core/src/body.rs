@@ -54,9 +54,7 @@ impl Body for ServerRecvBody {
         if !this.trailers_done {
             this.trailers_done = true;
             return match this.stream.poll_recv_trailers(cx) {
-                Poll::Ready(Ok(Some(trailers))) => {
-                    Poll::Ready(Some(Ok(Frame::trailers(trailers))))
-                }
+                Poll::Ready(Ok(Some(trailers))) => Poll::Ready(Some(Ok(Frame::trailers(trailers)))),
                 Poll::Ready(Ok(None)) => Poll::Ready(None),
                 Poll::Ready(Err(e)) => Poll::Ready(Some(Err(CoreError::from(e)))),
                 Poll::Pending => Poll::Pending,
@@ -115,9 +113,7 @@ impl Body for ClientRecvBody {
         if !this.trailers_done {
             this.trailers_done = true;
             return match this.stream.poll_recv_trailers(cx) {
-                Poll::Ready(Ok(Some(trailers))) => {
-                    Poll::Ready(Some(Ok(Frame::trailers(trailers))))
-                }
+                Poll::Ready(Ok(Some(trailers))) => Poll::Ready(Some(Ok(Frame::trailers(trailers)))),
                 Poll::Ready(Ok(None)) => Poll::Ready(None),
                 Poll::Ready(Err(e)) => Poll::Ready(Some(Err(CoreError::from(e)))),
                 Poll::Pending => Poll::Pending,

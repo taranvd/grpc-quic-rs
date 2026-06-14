@@ -131,11 +131,16 @@ async fn test_server_serve_and_dispatch() {
             .unwrap()
     };
 
-    let h3_session = H3ClientSession::new(quic_conn.get_ref().clone()).await.unwrap();
+    let h3_session = H3ClientSession::new(quic_conn.get_ref().clone())
+        .await
+        .unwrap();
 
     let req = http::Request::builder()
         .method("POST")
-        .uri(format!("https://localhost:{}/helloworld.Greeter/SayHello", bound_addr.port()))
+        .uri(format!(
+            "https://localhost:{}/helloworld.Greeter/SayHello",
+            bound_addr.port()
+        ))
         .header("content-type", "application/grpc")
         .body(())
         .unwrap();

@@ -48,12 +48,13 @@ impl ConnectionPool {
         let quic = connect_fn(addr).await?;
         let h3 = H3ClientSession::new(quic.get_ref().clone())
             .await
-            .map_err(|e| {
-                ClientError::StreamIo(std::io::Error::other(e.to_string()))
-            })?;
+            .map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
         record_connection("client");
         debug!(remote = %addr, "established new QUIC connection + h3 session");
-        let entry = PoolEntry { quic: quic.clone(), h3 };
+        let entry = PoolEntry {
+            quic: quic.clone(),
+            h3,
+        };
         map.insert(addr, entry.clone());
         Ok(entry)
     }

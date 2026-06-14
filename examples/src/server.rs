@@ -119,7 +119,7 @@ fn generate_and_save_certs() -> TlsConfig {
         .with_no_client_auth()
         .with_single_cert(vec![server_cert], server_key)
         .unwrap();
-    server_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
     server_crypto.max_early_data_size = u32::MAX;
 
     TlsConfig::server(server_crypto)

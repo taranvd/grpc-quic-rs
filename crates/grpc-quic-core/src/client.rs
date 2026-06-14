@@ -12,9 +12,7 @@ pub type H3SendRequest = h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>;
 
 /// Build a client connection and spawn the driver in the background.
 /// Returns the `SendRequest` handle.
-pub async fn build_client_conn(
-    conn: quinn::Connection,
-) -> Result<H3SendRequest, CoreError> {
+pub async fn build_client_conn(conn: quinn::Connection) -> Result<H3SendRequest, CoreError> {
     let (mut h3_conn, send_req) = h3::client::builder()
         .build(h3_quinn::Connection::new(conn))
         .await
@@ -53,10 +51,7 @@ impl H3ClientSession {
         req: http::Request<()>,
     ) -> Result<h3::client::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>, CoreError> {
         let mut guard = self.send_req.lock().await;
-        let stream = guard
-            .send_request(req)
-            .await
-            .map_err(CoreError::from)?;
+        let stream = guard.send_request(req).await.map_err(CoreError::from)?;
         Ok(stream)
     }
 }

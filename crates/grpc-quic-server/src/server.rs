@@ -73,8 +73,10 @@ impl QuicServer {
     /// Bind to `addr` and serve requests until a shutdown signal is received.
     pub async fn serve<S>(self, addr: SocketAddr, service: S) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
-            + Clone
+        S: tower::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<tonic::body::BoxBody>,
+            > + Clone
             + Send
             + Sync
             + 'static,
@@ -93,8 +95,10 @@ impl QuicServer {
         signal: F,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
-            + Clone
+        S: tower::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<tonic::body::BoxBody>,
+            > + Clone
             + Send
             + Sync
             + 'static,
@@ -120,8 +124,10 @@ impl QuicServer {
         service: S,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
-            + Clone
+        S: tower::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<tonic::body::BoxBody>,
+            > + Clone
             + Send
             + Sync
             + 'static,
@@ -141,8 +147,10 @@ impl QuicServer {
         signal: F,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
-            + Clone
+        S: tower::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<tonic::body::BoxBody>,
+            > + Clone
             + Send
             + Sync
             + 'static,
@@ -209,8 +217,10 @@ async fn handle_connection<S>(
     semaphore: Arc<Semaphore>,
 ) -> Result<(), ServerError>
 where
-    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<tonic::body::BoxBody>>
-        + Clone
+    S: tower::Service<
+            http::Request<tonic::body::BoxBody>,
+            Response = http::Response<tonic::body::BoxBody>,
+        > + Clone
         + Send
         + Sync
         + 'static,

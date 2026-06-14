@@ -102,8 +102,8 @@ async fn buffer_body(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientErro
     while let Some(frame_res) =
         futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
     {
-        let frame = frame_res
-            .map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
+        let frame =
+            frame_res.map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
         if let Ok(data) = frame.into_data() {
             buf.extend_from_slice(&data);
         }
@@ -130,7 +130,8 @@ impl QuicChannel {
 impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
     type Response = http::Response<grpc_quic_core::body::ClientRecvBody>;
     type Error = ClientError;
-    type Future = Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future =
+        Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -153,7 +154,11 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                 .map_err(|_| ClientError::Closed)?;
 
             let path = req.uri().path().to_owned();
-            let authority = req.uri().authority().map(|a| a.to_string()).unwrap_or_else(|| server_name.clone());
+            let authority = req
+                .uri()
+                .authority()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| server_name.clone());
             let (_, body) = req.into_parts();
 
             let body_bytes = buffer_body(body).await?;
@@ -206,7 +211,8 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                         s
                     }
                     Err(e) => {
-                        last_error = Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
+                        last_error =
+                            Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
                         pool.remove(&remote).await;
                         continue;
                     }
@@ -214,7 +220,8 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
 
                 if !body_bytes.is_empty() {
                     if let Err(e) = stream.send_data(body_bytes.clone()).await {
-                        last_error = Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
+                        last_error =
+                            Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
                         continue;
                     }
                     record_bytes_sent("client", body_bytes.len() as u64);
@@ -228,7 +235,8 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                 let resp = match stream.recv_response().await {
                     Ok(r) => r,
                     Err(e) => {
-                        last_error = Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
+                        last_error =
+                            Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
                         continue;
                     }
                 };
