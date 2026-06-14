@@ -1,8 +1,8 @@
-use std::pin::Pin;
+use grpc_quic::transport::TlsConfig;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
-use grpc_quic::transport::TlsConfig;
 
 pub mod pb {
     tonic::include_proto!("streaming");
@@ -42,7 +42,10 @@ impl StreamingService for MyStreamingService {
             names.push(req.name);
         }
         Ok(Response::new(HelloResponse {
-            message: format!("Hello to all of you: {}! (Client Streaming)", names.join(", ")),
+            message: format!(
+                "Hello to all of you: {}! (Client Streaming)",
+                names.join(", ")
+            ),
         }))
     }
 
@@ -56,7 +59,7 @@ impl StreamingService for MyStreamingService {
         let req = request.into_inner();
         let name = req.name;
         println!("Received Server Streaming Request from: {}", name);
-        
+
         let output_stream = async_stream::try_stream! {
             for i in 1..=5 {
                 yield HelloResponse {
@@ -65,7 +68,7 @@ impl StreamingService for MyStreamingService {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         };
-        
+
         Ok(Response::new(Box::pin(output_stream)))
     }
 
@@ -78,7 +81,7 @@ impl StreamingService for MyStreamingService {
     ) -> Result<Response<Self::BidiHelloStream>, Status> {
         let mut in_stream = request.into_inner();
         println!("Received Bidirectional Streaming Request...");
-        
+
         let output_stream = async_stream::try_stream! {
             while let Some(req) = in_stream.next().await {
                 let req = req?;
@@ -88,7 +91,7 @@ impl StreamingService for MyStreamingService {
                 };
             }
         };
-        
+
         Ok(Response::new(Box::pin(output_stream)))
     }
 }
@@ -96,18 +99,20 @@ impl StreamingService for MyStreamingService {
 fn generate_and_save_certs() -> TlsConfig {
     let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-    
+
     let cert_der = cert.cert.der().to_vec();
     let key_der = cert.key_pair.serialize_der();
-    
+
     // Save cert_der to file so client can read it
     std::fs::write("cert.der", &cert_der).unwrap();
-    
+
     let server_cert = rustls::pki_types::CertificateDer::from(cert_der);
-    let server_key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(key_der));
-    
+    let server_key = rustls::pki_types::PrivateKeyDer::Pkcs8(
+        rustls::pki_types::PrivatePkcs8KeyDer::from(key_der),
+    );
+
     let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-    
+
     let mut server_crypto = rustls::ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
@@ -116,26 +121,28 @@ fn generate_and_save_certs() -> TlsConfig {
         .unwrap();
     server_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
     server_crypto.max_early_data_size = u32::MAX;
-    
+
     TlsConfig::server(server_crypto)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    
+
     let tls_config = generate_and_save_certs();
     let addr: SocketAddr = "127.0.0.1:50051".parse()?;
-    
+
     let service = MyStreamingService;
     let server = grpc_quic::server::QuicServer::builder()
         .tls(tls_config)
         .build();
-        
+
     println!("Starting gRPC-over-QUIC server on {}", addr);
     println!("Writing self-signed cert.der to current directory for client authentication...");
-    
-    server.serve(addr, StreamingServiceServer::new(service)).await?;
-    
+
+    server
+        .serve(addr, StreamingServiceServer::new(service))
+        .await?;
+
     Ok(())
 }

@@ -48,7 +48,7 @@ impl TlsConfig {
             .with_root_certificates(root_store)
             .with_no_client_auth();
         client_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
-        
+
         Self::client(client_crypto)
     }
 
@@ -56,9 +56,7 @@ impl TlsConfig {
     pub fn server_config(&self) -> Result<Arc<ServerConfig>, TransportError> {
         match &self.inner {
             TlsConfigInner::Server(c) => Ok(Arc::clone(c)),
-            TlsConfigInner::Client(_) => {
-                Err(TransportError::Tls("expected server config".into()))
-            }
+            TlsConfigInner::Client(_) => Err(TransportError::Tls("expected server config".into())),
         }
     }
 
@@ -66,9 +64,7 @@ impl TlsConfig {
     pub fn client_config(&self) -> Result<Arc<ClientConfig>, TransportError> {
         match &self.inner {
             TlsConfigInner::Client(c) => Ok(Arc::clone(c)),
-            TlsConfigInner::Server(_) => {
-                Err(TransportError::Tls("expected client config".into()))
-            }
+            TlsConfigInner::Server(_) => Err(TransportError::Tls("expected client config".into())),
         }
     }
 }

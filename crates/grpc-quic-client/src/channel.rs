@@ -19,15 +19,17 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use tower::Service;
-use tracing::trace;
 use http_body::{Body, Frame};
+use quinn::RecvStream;
 use std::pin::Pin;
 use tokio::io::AsyncRead;
-use quinn::RecvStream;
+use tower::Service;
+use tracing::trace;
 
 use grpc_quic_discovery::Resolver;
-use grpc_quic_metrics::{record_stream, record_request, record_bytes_sent, record_bytes_received, record_reconnect};
+use grpc_quic_metrics::{
+    record_bytes_received, record_bytes_sent, record_reconnect, record_request, record_stream,
+};
 use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
@@ -102,9 +104,7 @@ impl QuicChannelBuilder {
             )));
         };
 
-        let server_name = self
-            .server_name
-            .unwrap_or_else(|| remote.ip().to_string());
+        let server_name = self.server_name.unwrap_or_else(|| remote.ip().to_string());
 
         Ok(QuicChannel {
             remote,
@@ -141,8 +141,11 @@ impl std::fmt::Debug for QuicResponseBody {
 /// Collect the entire body into a single `Bytes` buffer.
 async fn body_to_bytes(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientError> {
     let mut buf = BytesMut::new();
-    while let Some(frame_res) = futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-        let frame = frame_res.map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
+    while let Some(frame_res) =
+        futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+    {
+        let frame =
+            frame_res.map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
         if let Ok(data) = frame.into_data() {
             buf.extend_from_slice(&data);
         }
@@ -204,13 +207,16 @@ impl http_body::Body for QuicResponseBody {
             let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
             let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
             if 6 + msg_len == n {
-                let msg_bytes = this.buf[6..6+msg_len].to_vec();
+                let msg_bytes = this.buf[6..6 + msg_len].to_vec();
                 let msg = String::from_utf8(msg_bytes)
                     .unwrap_or_else(|_| "invalid utf-8 message".to_string());
                 this.buf.clear();
 
                 let mut trailers = http::HeaderMap::new();
-                trailers.insert("grpc-status", http::HeaderValue::from_str(&status.to_string()).unwrap());
+                trailers.insert(
+                    "grpc-status",
+                    http::HeaderValue::from_str(&status.to_string()).unwrap(),
+                );
                 if !msg.is_empty() {
                     trailers.insert("grpc-message", http::HeaderValue::from_str(&msg).unwrap());
                 }
@@ -220,7 +226,8 @@ impl http_body::Body for QuicResponseBody {
 
         // Otherwise, try to parse a gRPC frame
         if n >= 5 {
-            let len = u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
+            let len =
+                u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
             let total_len = 5 + len;
 
             if n >= total_len {
@@ -228,7 +235,7 @@ impl http_body::Body for QuicResponseBody {
                 return Poll::Ready(Some(Ok(Frame::data(data))));
             } else if this.eof {
                 return Poll::Ready(Some(Err(ClientError::InvalidResponse(
-                    "truncated gRPC frame".into()
+                    "truncated gRPC frame".into(),
                 ))));
             } else {
                 return Poll::Pending;
@@ -237,9 +244,9 @@ impl http_body::Body for QuicResponseBody {
 
         if this.eof {
             if n > 0 {
-                return Poll::Ready(Some(Err(ClientError::InvalidResponse(
-                    format!("trailing garbage bytes at end of stream: {n} bytes")
-                ))));
+                return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
+                    "trailing garbage bytes at end of stream: {n} bytes"
+                )))));
             }
             return Poll::Ready(None);
         }
@@ -345,7 +352,10 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
 
             // Check path length once
             if path.len() > u16::MAX as usize {
-                return Err(ClientError::InvalidResponse(format!("request path too long: {}", path.len())));
+                return Err(ClientError::InvalidResponse(format!(
+                    "request path too long: {}",
+                    path.len()
+                )));
             }
 
             let mut last_error = None;
@@ -359,15 +369,18 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                 }
 
                 let tls_config = tls.clone().unwrap_or_else(TlsConfig::client_default);
-                let conn = match pool.get_or_connect(remote, |addr| {
-                    let tls_config = tls_config.clone();
-                    let server_name = server_name.clone();
-                    async move {
-                        let endpoint = grpc_quic_transport::QuicEndpoint::client(tls_config)?;
-                        let conn = endpoint.connect(addr, &server_name).await?;
-                        Ok(conn)
-                    }
-                }).await {
+                let conn = match pool
+                    .get_or_connect(remote, |addr| {
+                        let tls_config = tls_config.clone();
+                        let server_name = server_name.clone();
+                        async move {
+                            let endpoint = grpc_quic_transport::QuicEndpoint::client(tls_config)?;
+                            let conn = endpoint.connect(addr, &server_name).await?;
+                            Ok(conn)
+                        }
+                    })
+                    .await
+                {
                     Ok(c) => c,
                     Err(e) => {
                         last_error = Some(e);

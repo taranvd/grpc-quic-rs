@@ -1,12 +1,12 @@
 //! QuicServer — builder and main serve loop.
 
-use std::net::SocketAddr;
-use grpc_quic_transport::{TlsConfig, QuicConnection, QuicEndpoint};
 use grpc_quic_metrics::record_connection;
-use tracing::{info, error};
+use grpc_quic_transport::{QuicConnection, QuicEndpoint, TlsConfig};
+use std::net::SocketAddr;
+use tracing::{error, info};
 
-use crate::error::ServerError;
 use crate::acceptor::handle_stream;
+use crate::error::ServerError;
 
 /// Builder for [`QuicServer`].
 #[derive(Debug, Default)]
@@ -60,14 +60,19 @@ impl QuicServer {
     /// Bind to `addr` and serve requests until a shutdown signal is received.
     pub async fn serve<S, B>(self, addr: SocketAddr, service: S) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>> + Clone + Send + Sync + 'static,
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
         S::Future: Send + 'static,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         B: http_body::Body + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
-        self.serve_with_shutdown(addr, service, std::future::pending()).await
+        self.serve_with_shutdown(addr, service, std::future::pending())
+            .await
     }
 
     /// Bind to `addr` and serve requests until the `signal` future completes.
@@ -78,7 +83,11 @@ impl QuicServer {
         signal: F,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>> + Clone + Send + Sync + 'static,
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
         S::Future: Send + 'static,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         B: http_body::Body + Send + 'static,
@@ -93,7 +102,8 @@ impl QuicServer {
         })?;
 
         let endpoint = grpc_quic_transport::QuicEndpoint::server(addr, tls)?;
-        self.serve_with_incoming_shutdown(endpoint, service, signal).await
+        self.serve_with_incoming_shutdown(endpoint, service, signal)
+            .await
     }
 
     /// Serve requests over an already-bound `QuicEndpoint`.
@@ -103,14 +113,19 @@ impl QuicServer {
         service: S,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>> + Clone + Send + Sync + 'static,
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
         S::Future: Send + 'static,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         B: http_body::Body + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
-        self.serve_with_incoming_shutdown(endpoint, service, std::future::pending()).await
+        self.serve_with_incoming_shutdown(endpoint, service, std::future::pending())
+            .await
     }
 
     /// Serve requests over an already-bound `QuicEndpoint` until the `signal` future completes.
@@ -122,7 +137,11 @@ impl QuicServer {
         signal: F,
     ) -> Result<(), ServerError>
     where
-        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>> + Clone + Send + Sync + 'static,
+        S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
         S::Future: Send + 'static,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         B: http_body::Body + Send + 'static,
@@ -176,12 +195,13 @@ impl QuicServer {
 }
 
 #[tracing::instrument(skip(conn, service))]
-async fn handle_connection<S, B>(
-    conn: QuicConnection,
-    service: S,
-) -> Result<(), ServerError>
+async fn handle_connection<S, B>(conn: QuicConnection, service: S) -> Result<(), ServerError>
 where
-    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>> + Clone + Send + Sync + 'static,
+    S: tower::Service<http::Request<tonic::body::BoxBody>, Response = http::Response<B>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     S::Future: Send + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     B: http_body::Body + Send + 'static,

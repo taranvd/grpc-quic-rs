@@ -24,9 +24,7 @@ impl QuicConnection {
     /// Each call yields an independent pair of `(SendStream, RecvStream)`.
     /// In grpc-quic this maps to **one RPC call**.
     #[tracing::instrument(skip(self))]
-    pub async fn open_bi(
-        &self,
-    ) -> Result<(quinn::SendStream, quinn::RecvStream), TransportError> {
+    pub async fn open_bi(&self) -> Result<(quinn::SendStream, quinn::RecvStream), TransportError> {
         self.inner
             .open_bi()
             .await

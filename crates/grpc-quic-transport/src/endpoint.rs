@@ -45,8 +45,9 @@ impl QuicEndpoint {
         let server_config = tls.server_config()?;
         let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(server_config)
             .map_err(|e| TransportError::Tls(e.to_string()))?;
-        let quinn_server_config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic_server_config));
-        
+        let quinn_server_config =
+            quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic_server_config));
+
         let endpoint = quinn::Endpoint::server(quinn_server_config, addr)?;
         Ok(Self { inner: endpoint })
     }
@@ -65,7 +66,7 @@ impl QuicEndpoint {
         let quic_client_config = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)
             .map_err(|e| TransportError::Tls(e.to_string()))?;
         let quinn_client_config = quinn::ClientConfig::new(std::sync::Arc::new(quic_client_config));
-        
+
         let bind_addr = "0.0.0.0:0".parse().unwrap();
         let mut endpoint = quinn::Endpoint::client(bind_addr)?;
         endpoint.set_default_client_config(quinn_client_config);
