@@ -20,3 +20,8 @@
 
 pub mod prometheus;
 pub mod tracing;
+
+pub use prometheus::{
+    record_connection, record_stream, record_request, record_reconnect,
+    record_bytes_sent, record_bytes_received, get_metrics,
+};
