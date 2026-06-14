@@ -21,11 +21,13 @@ tracing     = { workspace = true }
 futures     = { workspace = true }
 tower       = { workspace = true }
 http        = { workspace = true }
+http-body   = "1"
 tonic       = { workspace = true }
 pin-project-lite = { workspace = true }
 
 [dev-dependencies]
 grpc-quic-client    = { path = "../grpc-quic-client" }
+rustls              = { workspace = true }
 rcgen               = { workspace = true }
 tokio               = { workspace = true }
 tokio-test          = { workspace = true }
