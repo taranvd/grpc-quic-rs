@@ -23,6 +23,7 @@ impl QuicConnection {
     ///
     /// Each call yields an independent pair of `(SendStream, RecvStream)`.
     /// In grpc-quic this maps to **one RPC call**.
+    #[tracing::instrument(skip(self))]
     pub async fn open_bi(
         &self,
     ) -> Result<(quinn::SendStream, quinn::RecvStream), TransportError> {
@@ -35,6 +36,7 @@ impl QuicConnection {
     /// Accept the next inbound bi-directional stream from the remote peer.
     ///
     /// Returns `None` when the connection is closed.
+    #[tracing::instrument(skip(self))]
     pub async fn accept_bi(
         &self,
     ) -> Option<Result<(quinn::SendStream, quinn::RecvStream), TransportError>> {

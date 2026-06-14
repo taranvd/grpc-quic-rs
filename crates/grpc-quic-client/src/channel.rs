@@ -33,23 +33,12 @@ use grpc_quic_transport::TlsConfig;
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
 
 /// Builder for [`QuicChannel`].
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct QuicChannelBuilder {
     retry: RetryPolicy,
     server_name: Option<String>,
     tls: Option<TlsConfig>,
     resolver: Option<Box<dyn Resolver>>,
-}
-
-impl Default for QuicChannelBuilder {
-    fn default() -> Self {
-        Self {
-            retry: RetryPolicy::default(),
-            server_name: None,
-            tls: None,
-            resolver: None,
-        }
-    }
 }
 
 impl QuicChannelBuilder {
@@ -93,6 +82,7 @@ impl QuicChannelBuilder {
     ///
     /// Returns [`ClientError`] if `addr` cannot be parsed and no resolver
     /// is configured, or if the resolver returns an empty list.
+    #[tracing::instrument(skip(self, addr))]
     pub async fn connect(self, addr: impl Into<String>) -> Result<QuicChannel, ClientError> {
         let addr_str = addr.into();
 
@@ -339,9 +329,19 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
 
         Box::pin(async move {
             let path = req.uri().path().to_owned();
+            let span = tracing::info_span!(
+                "grpc_quic.call",
+                remote = %remote,
+                path = %path,
+            );
+            let _guard = span.enter();
+
             // Reconstruct the body since we may need multiple attempts
             let (_, body) = req.into_parts();
+            // Drop the span guard before any .await to keep future Send
+            drop(_guard);
             let body_bytes = body_to_bytes(body).await?;
+            let _guard = span.enter();
 
             // Check path length once
             if path.len() > u16::MAX as usize {

@@ -75,6 +75,7 @@ impl QuicEndpoint {
     /// Accept the next incoming QUIC connection.
     ///
     /// Returns `None` when the endpoint has been closed.
+    #[tracing::instrument(skip(self))]
     pub async fn accept(&self) -> Option<Result<QuicConnection, TransportError>> {
         let connecting = self.inner.accept().await?;
         Some(
@@ -88,6 +89,7 @@ impl QuicEndpoint {
     /// Initiate a connection to a remote server.
     ///
     /// `server_name` is used for TLS SNI.
+    #[tracing::instrument(skip(self))]
     pub async fn connect(
         &self,
         addr: SocketAddr,

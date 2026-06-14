@@ -114,6 +114,7 @@ impl QuicServer {
     }
 
     /// Serve requests over an already-bound `QuicEndpoint` until the `signal` future completes.
+    #[tracing::instrument(skip(self, endpoint, service, signal))]
     pub async fn serve_with_incoming_shutdown<S, B, F>(
         self,
         endpoint: QuicEndpoint,
@@ -174,6 +175,7 @@ impl QuicServer {
     }
 }
 
+#[tracing::instrument(skip(conn, service))]
 async fn handle_connection<S, B>(
     conn: QuicConnection,
     service: S,

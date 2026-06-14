@@ -52,6 +52,7 @@ impl Body for QuicRequestBody {
 }
 
 /// Handle a single bi-directional stream.
+#[tracing::instrument(skip(send, recv, service))]
 pub async fn handle_stream<S, B>(
     mut send: SendStream,
     mut recv: RecvStream,
