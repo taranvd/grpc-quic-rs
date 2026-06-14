@@ -202,8 +202,9 @@ impl http_body::Body for QuicResponseBody {
         // 2. Parse frames from `buf`
         let n = this.buf.len();
 
-        // Check if we have the trailers block (only when eof is true and it's the only thing left)
-        if this.eof && n >= 6 {
+        // Try trailers first: if buf starts with [u32 status][u16 msg_len][msg],
+        // and the total matches, this is a trailer block (regardless of eof).
+        if n >= 6 {
             let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
             let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
             if 6 + msg_len == n {

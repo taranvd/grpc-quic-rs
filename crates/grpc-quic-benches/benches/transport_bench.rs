@@ -1,41 +1,50 @@
-//! # Transport benchmarks: QUIC vs TCP baseline
+//! # Transport benchmarks: gRPC over QUIC vs gRPC over TCP (tonic baseline)
 //!
-//! Measures raw request-response round-trip latency across both transports
-//! using identical echo services with a simple length-prefixed wire format.
+//! Full-stack unary RPC latency — tonic generated client → transport
+//! → tonic generated service — over both QUIC and TCP.
 //!
-//! - **QUIC**: [`QuicEndpoint`] + [`QuicConnection`] (mandatory TLS 1.3).
-//! - **TCP**: tokio [`TcpStream`] (plain, no TLS).
+//! - **QUIC**: `BenchServiceClient<QuicChannel>` → [`QuicServer`] → [`BenchServiceServer`]
+//! - **TCP**:  `BenchServiceClient<Channel>` → [`tonic::transport::Server`] → [`BenchServiceServer`]
 //!
-//! Wire format (both):
-//! ```text
-//! Request:  [u16 BE payload_len][payload_bytes]
-//! Response: [u16 BE payload_len][payload_bytes]
-//! ```
-//!
-//! ## Design
-//!
-//! Both servers are lean echo handlers — no gRPC, no tonic, no protobuf.
-//! This gives a pure transport-vs-transport comparison.
-//!
-//! ## Caveat
-//!
-//! QUIC includes mandatory TLS 1.3 handshake overhead on each **new**
-//! connection. This benchmark reuses a single QUIC connection (streams
-//! are cheap and independent), so the TLS cost is amortised.
+//! Both paths use identical protobuf messages and identical service logic.
+//! The only difference is the transport layer (QUIC vs TCP).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 
-use grpc_quic::transport::{QuicConnection, QuicEndpoint, TlsConfig};
+use grpc_quic::client::QuicChannel;
+use grpc_quic::server::QuicServer;
+use grpc_quic::transport::{QuicEndpoint, TlsConfig};
 
-/// Payload sizes in bytes for the latency sweep.
+pub mod pb {
+    tonic::include_proto!("bench");
+}
+
+use pb::bench_service_client::BenchServiceClient;
+use pb::bench_service_server::{BenchService, BenchServiceServer};
+use pb::Payload;
+
+/// Payload body sizes in bytes (protobuf overhead is negligible).
 const PAYLOAD_SIZES: &[usize] = &[64, 256, 1024, 4096, 16384];
+
+// ── Echo service ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Default)]
+struct EchoService;
+
+#[tonic::async_trait]
+impl BenchService for EchoService {
+    async fn unary(
+        &self,
+        request: tonic::Request<Payload>,
+    ) -> Result<tonic::Response<Payload>, tonic::Status> {
+        Ok(tonic::Response::new(request.into_inner()))
+    }
+}
 
 // ── TLS helpers (same as grpc-quic-server tests) ─────────────────────────────
 
@@ -60,7 +69,6 @@ fn make_tls_configs() -> (TlsConfig, TlsConfig) {
         .with_single_cert(vec![server_cert.clone()], server_key)
         .unwrap();
     server_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
-    server_crypto.max_early_data_size = u32::MAX;
 
     let mut root_store = rustls::RootCertStore::empty();
     root_store.add(server_cert).unwrap();
@@ -87,52 +95,43 @@ struct BenchServers {
     tcp_shutdown: tokio::sync::oneshot::Sender<()>,
 }
 
-/// Start both echo servers on ephemeral ports.
 fn setup_servers(rt: &Runtime, server_tls: TlsConfig) -> BenchServers {
-    let (quic_shutdown_tx, mut quic_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let (tcp_shutdown_tx, mut tcp_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (quic_shutdown_tx, quic_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (tcp_shutdown_tx, tcp_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let (quic_addr, tcp_addr) = rt.block_on(async {
         // ── QUIC server ───────────────────────────────────────────────────
         let quic_ep = QuicEndpoint::server("127.0.0.1:0".parse().unwrap(), server_tls).unwrap();
         let qaddr = quic_ep.local_addr().unwrap();
+        let quic_svc = BenchServiceServer::new(EchoService);
 
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = &mut quic_shutdown_rx => break,
-                    conn = quic_ep.accept() => {
-                        match conn {
-                            Some(Ok(c)) => {
-                                tokio::spawn(handle_quic_connection(c));
-                            }
-                            _ => break,
-                        }
-                    }
-                }
-            }
+            QuicServer::builder()
+                .build()
+                .serve_with_incoming_shutdown(quic_ep, quic_svc, async {
+                    quic_shutdown_rx.await.ok();
+                })
+                .await
+                .ok();
         });
 
-        // ── TCP server ───────────────────────────────────────────────────
+        // ── TCP/tonic server ──────────────────────────────────────────────
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let taddr = listener.local_addr().unwrap();
+        let tcp_svc = BenchServiceServer::new(EchoService);
 
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = &mut tcp_shutdown_rx => break,
-                    conn = listener.accept() => {
-                        match conn {
-                            Ok((mut s, _)) => {
-                                tokio::spawn(async move {
-                                    echo_on_tcp(&mut s).await;
-                                });
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-            }
+            tonic::transport::Server::builder()
+                .add_service(tcp_svc)
+                .serve_with_incoming_shutdown(
+                    tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
+                        .unwrap(),
+                    async {
+                        tcp_shutdown_rx.await.ok();
+                    },
+                )
+                .await
+                .ok();
         });
 
         (qaddr, taddr)
@@ -146,52 +145,6 @@ fn setup_servers(rt: &Runtime, server_tls: TlsConfig) -> BenchServers {
     }
 }
 
-/// QUIC connection handler: accepts streams and echoes them.
-async fn handle_quic_connection(conn: QuicConnection) {
-    while let Some(Ok((send, recv))) = conn.accept_bi().await {
-        tokio::spawn(echo_on_quic_stream(send, recv));
-    }
-}
-
-/// Echo on a QUIC bi-stream: `[u16 len][payload]` → `[u16 len][payload]`.
-async fn echo_on_quic_stream(mut send: quinn::SendStream, mut recv: quinn::RecvStream) {
-    let mut len_buf = [0u8; 2];
-    if recv.read_exact(&mut len_buf).await.is_err() {
-        return;
-    }
-    let payload_len = u16::from_be_bytes(len_buf) as usize;
-    let mut payload = vec![0u8; payload_len];
-    if recv.read_exact(&mut payload).await.is_err() {
-        return;
-    }
-    let _ = send.write_all(&len_buf).await;
-    let _ = send.write_all(&payload).await;
-    let _ = send.finish();
-}
-
-/// Echo on a TCP stream — loops to keep the connection alive for
-/// multiple requests (similar to how QUIC reuses one connection
-/// for many bi-streams).
-async fn echo_on_tcp(stream: &mut tokio::net::TcpStream) {
-    loop {
-        let mut len_buf = [0u8; 2];
-        if stream.read_exact(&mut len_buf).await.is_err() {
-            return;
-        }
-        let payload_len = u16::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; payload_len];
-        if stream.read_exact(&mut payload).await.is_err() {
-            return;
-        }
-        if stream.write_all(&len_buf).await.is_err() {
-            return;
-        }
-        if stream.write_all(&payload).await.is_err() {
-            return;
-        }
-    }
-}
-
 // ── Benchmark ────────────────────────────────────────────────────────────────
 
 fn bench_transport(c: &mut Criterion) {
@@ -199,43 +152,55 @@ fn bench_transport(c: &mut Criterion) {
     let (server_tls, client_tls) = make_tls_configs();
     let servers = setup_servers(&rt, server_tls);
 
-    // Brief pause for servers to start accepting
+    // Give servers time to bind and start accepting
     std::thread::sleep(Duration::from_millis(200));
 
-    // ── Pre-open one QUIC connection and one TCP connection ───────────────
-    let quic_conn = rt.block_on(async {
-        // QUIC: create client endpoint and connect
-        let client_ep = QuicEndpoint::client(client_tls).unwrap();
-        client_ep
-            .connect(servers.quic_addr, "localhost")
+    // ── Clients ───────────────────────────────────────────────────────────
+    let quic_channel = rt.block_on(async {
+        QuicChannel::builder()
+            .tls(client_tls)
+            .connect(servers.quic_addr.to_string())
             .await
             .unwrap()
     });
 
-    // ── QUIC latency sweep ────────────────────────────────────────────────
+    let tcp_channel = rt.block_on(async {
+        tonic::transport::Endpoint::new(format!("http://{}", servers.tcp_addr))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap()
+    });
+
+    let mut quic_client = BenchServiceClient::new(quic_channel);
+    let mut tcp_client = BenchServiceClient::new(tcp_channel);
+
+    // Warmup to establish connections
+    rt.block_on(async {
+        let w = Payload {
+            body: vec![0u8; 64],
+        };
+        let _ = quic_client.unary(tonic::Request::new(w.clone())).await;
+        let _ = tcp_client.unary(tonic::Request::new(w)).await;
+    });
+
+    // ── QUIC unary latency ────────────────────────────────────────────────
     {
-        let mut group = c.benchmark_group("quic_stream");
+        let mut group = c.benchmark_group("quic_unary");
         group.measurement_time(Duration::from_secs(10));
         group.sample_size(50);
         for &size in PAYLOAD_SIZES {
             group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-                let conn = quic_conn.clone();
+                let mut client = quic_client.clone();
+                let payload = Payload {
+                    body: vec![0u8; size],
+                };
                 b.iter(|| {
                     rt.block_on(async {
-                        let (mut send, mut recv) = conn.open_bi().await.unwrap();
-                        let payload = vec![0u8; size];
-                        let len_be = (size as u16).to_be_bytes();
-                        send.write_all(&len_be).await.unwrap();
-                        send.write_all(&payload).await.unwrap();
-                        send.finish().unwrap();
-
-                        let mut resp_len = [0u8; 2];
-                        recv.read_exact(&mut resp_len).await.unwrap();
-                        let resp_len = u16::from_be_bytes(resp_len) as usize;
-                        let mut resp = vec![0u8; resp_len];
-                        recv.read_exact(&mut resp).await.unwrap();
-                        black_box(resp);
+                        let req = tonic::Request::new(payload.clone());
+                        let resp = client.unary(req).await.unwrap();
+                        black_box(resp.into_inner());
                     });
                 });
             });
@@ -243,33 +208,23 @@ fn bench_transport(c: &mut Criterion) {
         group.finish();
     }
 
-    // ── TCP latency sweep (persistent connection) ─────────────────────────
+    // ── TCP unary latency ─────────────────────────────────────────────────
     {
-        let mut tcp_stream = rt.block_on(async {
-            tokio::net::TcpStream::connect(servers.tcp_addr)
-                .await
-                .unwrap()
-        });
-
-        let mut group = c.benchmark_group("tcp_stream");
+        let mut group = c.benchmark_group("tcp_unary");
         group.measurement_time(Duration::from_secs(10));
         group.sample_size(50);
         for &size in PAYLOAD_SIZES {
             group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+                let mut client = tcp_client.clone();
+                let payload = Payload {
+                    body: vec![0u8; size],
+                };
                 b.iter(|| {
                     rt.block_on(async {
-                        let payload = vec![0u8; size];
-                        let len_be = (size as u16).to_be_bytes();
-                        tcp_stream.write_all(&len_be).await.unwrap();
-                        tcp_stream.write_all(&payload).await.unwrap();
-
-                        let mut resp_len = [0u8; 2];
-                        tcp_stream.read_exact(&mut resp_len).await.unwrap();
-                        let resp_len = u16::from_be_bytes(resp_len) as usize;
-                        let mut resp = vec![0u8; resp_len];
-                        tcp_stream.read_exact(&mut resp).await.unwrap();
-                        black_box(resp);
+                        let req = tonic::Request::new(payload.clone());
+                        let resp = client.unary(req).await.unwrap();
+                        black_box(resp.into_inner());
                     });
                 });
             });
@@ -277,7 +232,7 @@ fn bench_transport(c: &mut Criterion) {
         group.finish();
     }
 
-    // ── Clean shutdown ────────────────────────────────────────────────────
+    // ── Cleanup ───────────────────────────────────────────────────────────
     servers.quic_shutdown.send(()).ok();
     servers.tcp_shutdown.send(()).ok();
     std::thread::sleep(Duration::from_millis(200));

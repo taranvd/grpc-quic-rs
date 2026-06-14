@@ -525,12 +525,14 @@ name = "grpc-quic-benches"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "futures",
  "grpc-quic",
- "grpc-quic-transport",
- "quinn",
+ "prost",
  "rcgen",
  "rustls",
  "tokio",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]

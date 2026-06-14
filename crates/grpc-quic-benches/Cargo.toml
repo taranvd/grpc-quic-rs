@@ -6,15 +6,27 @@ publish = false
 
 [dependencies]
 grpc-quic = { path = "../grpc-quic", features = ["full"] }
-grpc-quic-transport = { path = "../grpc-quic-transport" }
-quinn = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
 tokio = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 
+[build-dependencies]
+tonic-build = "0.12"
+
+[features]
+loss-sim = []
+
 [[bench]]
 name = "transport_bench"
 harness = false
+
+[[bench]]
+name = "loss_bench"
+harness = false
+required-features = ["loss-sim"]

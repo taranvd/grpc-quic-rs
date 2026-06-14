@@ -63,3 +63,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check benchmarks compile
         run: cargo check --workspace --benches
+
+      - name: Check loss-simulation bench compiles (Linux-only, requires features)
+        run: cargo check -p grpc-quic-benches --features loss-sim --benches
+
+      - name: Run loss bench (quick smoke-test under loss)
+        run: cargo bench -p grpc-quic-benches --features loss-sim --bench loss_bench -- --quick
