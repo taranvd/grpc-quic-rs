@@ -6,8 +6,8 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use tokio::runtime::Runtime;
 
 use grpc_quic_benches::{
-    bench_sizes, make_payload, make_quic_client, make_tls_configs, record_latency, setup_servers,
-    shutdown_servers, take_histogram, BenchResult,
+    make_payload, make_quic_client, make_tls_configs, record_latency, setup_servers,
+    shutdown_servers, take_histogram, BenchResult, PAYLOAD_SIZES,
 };
 
 fn bench_quic_latency(c: &mut Criterion) {
@@ -27,7 +27,8 @@ fn bench_quic_latency(c: &mut Criterion) {
 
     let mut reports = Vec::new();
 
-    for &size in bench_sizes() {
+    for &size in PAYLOAD_SIZES {
+        eprintln!("[quic_latency] payload={size} start");
         let mut group = c.benchmark_group("quic_latency");
         group.throughput(Throughput::Bytes(size as u64));
 
@@ -44,9 +45,11 @@ fn bench_quic_latency(c: &mut Criterion) {
             });
         });
         group.finish();
+        eprintln!("[quic_latency] payload={size} criterion done");
 
         let hist = take_histogram();
         reports.push(BenchResult::new("quic", "latency", 1, 0, size, &hist));
+        eprintln!("[quic_latency] payload={size} recorded");
     }
 
     shutdown_servers(servers);
