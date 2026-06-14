@@ -27,6 +27,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install protoc
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install protobuf
+          fi
+
       - name: Cache Cargo registry + build artifacts
         uses: Swatinem/rust-cache@v2
 
@@ -49,6 +57,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
       - name: Check benchmarks compile
         run: cargo check --workspace --benches
