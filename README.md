@@ -1,9 +1,10 @@
-# grpc-quic
+# grpc-quic-rs
 
 > **Custom QUIC transport for tonic gRPC** — replaces HTTP/TCP with QUIC streams while preserving full gRPC semantics.
 
-[![CI](https://github.com/taranvd/grpc-quic-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/taranvd/grpc-quic-rs/actions)
+[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Docs.rs](https://img.shields.io/badge/docs.rs-grpc_quic-success)](https://docs.rs/grpc-quic)
 
 ---
 
@@ -22,26 +23,45 @@ QUIC offers:
 - Connection migration (survives IP changes, e.g. mobile roaming)
 - Built-in encryption — no separate TLS layer
 
-`grpc-quic` gives tonic services all of this with **zero changes to your
+`grpc-quic-rs` gives tonic services all of this with **zero changes to your
 protobuf definitions or service implementations**.
 
 ---
 
 ## Architecture
 
-```
-tonic  (RPC layer: service traits + protobuf codec)   ← unchanged
-        ↓
-grpc-quic  (tower::Service transport adapter)
-        ↓   one QUIC bi-directional stream per RPC call
-quinn  (QUIC over UDP, TLS 1.3 via rustls)
-        ↓
-UDP + TLS 1.3
+```mermaid
+flowchart TB
+    subgraph Application
+        S[tonic Service]
+        P[protobuf codec]
+    end
+
+    subgraph grpc-quic-rs
+        C[grpc-quic-client<br/>QuicChannel]
+        V[grpc-quic-server<br/>QuicServer]
+        T[grpc-quic-transport<br/>QUIC primitives]
+        M[grpc-quic-metrics<br/>Prometheus + tracing]
+        D[grpc-quic-discovery<br/>Resolver trait]
+    end
+
+    subgraph Network
+        Q[quinn · QUIC · UDP<br/>TLS 1.3 via rustls]
+    end
+
+    S --> C
+    S --> V
+    C --> T
+    V --> T
+    T --> Q
+    C -.-> M
+    V -.-> M
+    C -.-> D
 ```
 
 ### Key design principle
 
-> **grpc-quic does NOT modify gRPC semantics.**
+> **grpc-quic-rs does NOT modify gRPC semantics.**
 > It only replaces the transport layer (TCP → QUIC).
 > All gRPC payload bytes are forwarded verbatim — never interpreted or re-encoded.
 
@@ -100,7 +120,7 @@ All four gRPC streaming modes are supported:
 ## Roadmap
 
 - [x] **Phase 1** — Workspace scaffold, CI, justfile
-- [x] **Phase 2** — QUIC transport: endpoints, connections, TLS (mTLS)
+- [x] **Phase 2** — QUIC transport: endpoints, connections, TLS
 - [x] **Phase 3** — Server: QUIC acceptor → tonic Router dispatch
 - [x] **Phase 4** — Client: QuicChannel + ConnectionPool + RetryPolicy
 - [x] **Phase 5** — All streaming modes + examples
