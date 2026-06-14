@@ -89,6 +89,15 @@ jobs:
           --bench quic_latency --bench handshake
           -- --quick
 
+      - name: Generate summary table
+        if: always()
+        run: |
+          echo "## Quick Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          for f in bench-output/*.json; do
+            echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
+            cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          done
+
   # ── On push/PR to main: regression bench (medium) ────────────────────────
   bench-regression:
     name: Bench (regression)
@@ -111,6 +120,15 @@ jobs:
         with:
           name: bench-reports
           path: bench-output/*.json
+
+      - name: Generate summary table
+        if: always()
+        run: |
+          echo "## Regression Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          for f in bench-output/*.json; do
+            echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
+            cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          done
 
   # ── Nightly / manual: full performance CI ────────────────────────────────
   bench-nightly:

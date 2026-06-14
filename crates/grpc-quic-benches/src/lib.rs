@@ -267,6 +267,10 @@ pub struct BenchResult {
     pub latency: LatencySummary,
     /// Throughput in MiB/s computed from mean latency and payload size
     pub throughput_mib_s: f64,
+    /// Git commit SHA of the build (from GITHUB_SHA env or git rev-parse)
+    pub commit_sha: String,
+    /// ISO 8601 timestamp when the benchmark was run
+    pub timestamp: String,
 }
 
 impl BenchResult {
@@ -295,6 +299,8 @@ impl BenchResult {
             payload_bytes,
             latency,
             throughput_mib_s: throughput,
+            commit_sha: current_commit_sha(),
+            timestamp: current_timestamp(),
         }
     }
 
@@ -304,6 +310,31 @@ impl BenchResult {
         std::fs::create_dir_all(path.as_ref().parent().unwrap_or(Path::new(".")))?;
         std::fs::write(path.as_ref(), &json)
     }
+}
+
+/// Returns the current commit SHA from `GITHUB_SHA` env or `git rev-parse`.
+pub fn current_commit_sha() -> String {
+    if let Ok(sha) = std::env::var("GITHUB_SHA") {
+        return sha;
+    }
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Returns an ISO 8601 timestamp string for the current time.
+pub fn current_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
 // ── Payload builder ────────────────────────────────────────────────────────
