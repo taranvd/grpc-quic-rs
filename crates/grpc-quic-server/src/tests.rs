@@ -254,3 +254,93 @@ async fn test_channel_end_to_end() {
     shutdown_tx.send(()).unwrap();
     server_handle.await.unwrap();
 }
+
+#[tokio::test]
+async fn test_large_payload() {
+    let (server_tls, client_tls) = make_tls_configs();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    let service = tower::service_fn(|req: Request<tonic::body::BoxBody>| async move {
+        let mut body = req.into_body();
+        let mut received = Vec::new();
+        loop {
+            let frame =
+                futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
+            match frame {
+                Some(Ok(frame)) => {
+                    if let Ok(data) = frame.into_data() {
+                        received.extend_from_slice(&data);
+                    }
+                }
+                Some(Err(_)) => break,
+                None => break,
+            }
+        }
+
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
+
+        let body = TestBody {
+            data: Some(Bytes::from(received)),
+            trailers: Some(trailers),
+        };
+
+        Ok::<_, std::convert::Infallible>(Response::new(tonic::body::boxed(body)))
+    });
+
+    let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let server = QuicServer::builder().tls(server_tls).build();
+
+    let endpoint = QuicEndpoint::server(server_addr, server.tls.clone().unwrap()).unwrap();
+    let bound_addr = endpoint.local_addr().unwrap();
+
+    let server_handle = tokio::spawn(async move {
+        let signal = async move {
+            shutdown_rx.await.ok();
+        };
+        server
+            .serve_with_incoming_shutdown(endpoint, service, signal)
+            .await
+            .unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let mut channel = QuicChannel::builder()
+        .tls(client_tls)
+        .connect(bound_addr.to_string())
+        .await
+        .unwrap();
+
+    let payload = vec![0xABu8; 512 * 1024]; // 512 KB
+    let body = TestBody {
+        data: Some(Bytes::from(payload.clone())),
+        trailers: None,
+    };
+    let mut request = Request::new(tonic::body::boxed(body));
+    *request.uri_mut() = "/helloworld.Greeter/SayHello".parse().unwrap();
+
+    let response = channel.call(request).await.unwrap();
+
+    let mut resp_body = response.into_body();
+    let mut result = Vec::new();
+    loop {
+        let frame =
+            futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
+        match frame {
+            Some(Ok(frame)) => {
+                if let Ok(data) = frame.into_data() {
+                    result.extend_from_slice(&data);
+                }
+            }
+            Some(Err(_)) => break,
+            None => break,
+        }
+    }
+
+    assert_eq!(result.len(), payload.len());
+    assert_eq!(result, payload);
+
+    shutdown_tx.send(()).unwrap();
+    server_handle.await.unwrap();
+}
