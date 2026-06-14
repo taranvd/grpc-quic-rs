@@ -1,0 +1,29 @@
+[package]
+name = "grpc-quic-examples"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "streaming-server"
+path = "src/server.rs"
+
+[[bin]]
+name = "streaming-client"
+path = "src/client.rs"
+
+[dependencies]
+grpc-quic = { path = "../crates/grpc-quic", features = ["full"] }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+tokio-stream = "0.1"
+async-stream = "0.3"
+
+[build-dependencies]
+tonic-build = "0.12"

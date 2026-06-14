@@ -6,6 +6,7 @@ members = [
     "crates/grpc-quic-server",
     "crates/grpc-quic-metrics",
     "crates/grpc-quic-discovery",
+    "examples",
 ]
 resolver = "2"
 
