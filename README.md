@@ -60,8 +60,6 @@ UDP + TLS 1.3
 
 ## Quick start
 
-> ⚠️ Implementation is in progress. See the [roadmap](#roadmap) below.
-
 ```rust
 // Client
 use grpc_quic::client::QuicChannel;
@@ -102,12 +100,12 @@ All four gRPC streaming modes are supported:
 ## Roadmap
 
 - [x] **Phase 1** — Workspace scaffold, CI, justfile
-- [ ] **Phase 2** — QUIC transport: endpoints, connections, TLS (mTLS)
-- [ ] **Phase 3** — Server: QUIC acceptor → tonic Router dispatch
-- [ ] **Phase 4** — Client: QuicChannel + ConnectionPool + RetryPolicy
-- [ ] **Phase 5** — All streaming modes + examples
-- [ ] **Phase 6** — Prometheus metrics + tracing spans
-- [ ] **Phase 7** — Service discovery (Resolver trait + StaticResolver)
+- [x] **Phase 2** — QUIC transport: endpoints, connections, TLS (mTLS)
+- [x] **Phase 3** — Server: QUIC acceptor → tonic Router dispatch
+- [x] **Phase 4** — Client: QuicChannel + ConnectionPool + RetryPolicy
+- [x] **Phase 5** — All streaming modes + examples
+- [x] **Phase 6** — Prometheus metrics + tracing spans
+- [x] **Phase 7** — Service discovery (Resolver trait + StaticResolver)
 - [ ] **Phase 8** — Full documentation
 - [ ] **Phase 9** — Criterion benchmarks (vs tonic/TCP baseline)
 
