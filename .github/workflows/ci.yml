@@ -5,6 +5,20 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly full performance run
+    - cron: "0 6 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      bench_mode:
+        description: "Benchmark mode"
+        required: true
+        default: "quick"
+        type: choice
+        options:
+          - quick
+          - regression
+          - nightly
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
@@ -23,8 +37,7 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -55,9 +68,10 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-  # Separate job for benchmarks — compile-only check (no run, avoids long CI times)
-  bench-check:
-    name: Benchmark compile check
+  # ── PR / push: quick benchmark sanity check ──────────────────────────────
+  bench-quick:
+    name: Bench (quick smoke)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,21 +79,78 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
-      - name: Check benchmarks compile
-        run: cargo check --workspace --benches
 
-      - name: Check loss-simulation bench compiles (Linux-only, requires features)
-        run: cargo check -p grpc-quic-benches --features loss-sim --benches
+      - name: Check all benchmarks compile
+        run: cargo check -p grpc-quic-benches --benches
 
-      - name: Configure 5% packet loss on lo (idempotent)
-        run: |
-          sudo tc qdisc replace dev lo root netem loss 5%
-          echo "--- qdisc status ---"
-          tc qdisc show dev lo
+      - name: Quick bench (no loss, small samples)
+        run: >
+          cargo bench -p grpc-quic-benches
+          --bench quic_latency --bench handshake
+          -- --quick
 
-      - name: Run loss bench (quick smoke-test under loss)
-        run: cargo bench -p grpc-quic-benches --features loss-sim --bench loss_bench -- --quick
+  # ── On push/PR to main: regression bench (medium) ────────────────────────
+  bench-regression:
+    name: Bench (regression)
+    if: >
+      github.event_name == 'push' &&
+      github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Remove packet loss on lo
+      - name: Run latency benchmarks
+        run: cargo bench -p grpc-quic-benches --bench quic_latency --bench tcp_latency
+
+      - name: Upload JSON reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-reports
+          path: target/bench-results/*.json
+
+  # ── Nightly / manual: full performance CI ────────────────────────────────
+  bench-nightly:
+    name: Bench (nightly)
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.bench_mode == 'nightly')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Configure 5 % packet loss
+        run: scripts/netem.sh on lo 5
+
+      - name: Run all benchmarks with loss
+        run: >
+          cargo bench -p grpc-quic-benches
+          --bench quic_latency --bench tcp_latency
+          --bench loss_sim --bench handshake
+
+      - name: Remove packet loss
         if: always()
-        run: sudo tc qdisc del dev lo root 2>/dev/null || true
+        run: scripts/netem.sh off lo
+
+      - name: Upload JSON reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-bench-reports
+          path: target/bench-results/*.json
+
+      - name: Generate summary table
+        if: always()
+        run: |
+          echo "## Nightly Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          for f in target/bench-results/*.json; do
+            echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
+            cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          done

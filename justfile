@@ -65,9 +65,34 @@ docs-serve: check-docs
 bench:
     cargo bench --workspace
 
+# Run all latency benchmarks (no packet loss)
+bench-latency:
+    cargo bench -p grpc-quic-benches --bench quic_latency --bench tcp_latency
+
 # Run loss-simulation benchmark (Linux only, requires tc/netem)
-bench-loss:
-    cargo bench --features loss-sim --bench loss_bench
+bench-loss: scripts/netem.sh
+    scripts/netem.sh on lo 5
+    cargo bench -p grpc-quic-benches --bench loss_sim
+    scripts/netem.sh off lo
+
+# Run handshake benchmark
+bench-handshake:
+    cargo bench -p grpc-quic-benches --bench handshake
+
+# Run all benchmarks and produce JSON reports
+bench-all:
+    scripts/netem.sh on lo 5 2>/dev/null || true
+    cargo bench -p grpc-quic-benches \
+        --bench quic_latency \
+        --bench tcp_latency \
+        --bench handshake
+    scripts/netem.sh off lo 2>/dev/null || true
+
+# Quick bench smoke test (used in PR CI)
+bench-quick:
+    cargo bench -p grpc-quic-benches \
+        --bench quic_latency --bench handshake \
+        -- --quick
 
 # ── CI (mirrors GitHub Actions pipeline) ───────────────────────────────────────
 
