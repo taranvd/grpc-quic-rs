@@ -87,7 +87,7 @@ fn bench_loss(c: &mut Criterion) {
             ));
         }
         group.finish();
-        BenchResult::save_json_or_panic(&reports, "bench-output/quic_loss.json");
+        BenchResult::save_json_or_panic(&reports, "quic_loss.json");
     }
 
     // ── TCP under loss ──────────────────────────────────────────────────
@@ -131,7 +131,7 @@ fn bench_loss(c: &mut Criterion) {
             ));
         }
         group.finish();
-        BenchResult::save_json_or_panic(&reports, "bench-output/tcp_loss.json");
+        BenchResult::save_json_or_panic(&reports, "tcp_loss.json");
     }
 
     shutdown_servers(servers);

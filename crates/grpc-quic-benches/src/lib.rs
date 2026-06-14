@@ -304,27 +304,34 @@ impl BenchResult {
         }
     }
 
-    /// Save a list of results as a JSON report.
-    pub fn save_json(reports: &[BenchResult], path: impl AsRef<Path>) -> std::io::Result<()> {
+    /// Save a list of results as a JSON report into `<workspace>/bench-output/`.
+    pub fn save_json(reports: &[BenchResult], filename: &str) -> std::io::Result<()> {
         let json = serde_json::to_string_pretty(reports).unwrap();
-        std::fs::create_dir_all(path.as_ref().parent().unwrap_or(Path::new(".")))?;
-        std::fs::write(path.as_ref(), &json)
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates dir")
+            .parent()
+            .expect("workspace root")
+            .join("bench-output");
+        std::fs::create_dir_all(&out)?;
+        std::fs::write(out.join(filename), &json)
     }
 
-    /// Save and panic on failure (for use in benchmark harness where errors
-    /// would otherwise be silently swallowed).
-    pub fn save_json_or_panic(reports: &[BenchResult], path: impl AsRef<Path>) {
-        let path = path.as_ref().to_path_buf();
+    /// Save and panic on failure.
+    pub fn save_json_or_panic(reports: &[BenchResult], filename: &str) {
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates dir")
+            .parent()
+            .expect("workspace root")
+            .join("bench-output");
         eprintln!(
-            "[bench] saving {} results to {} (cwd: {})",
+            "[bench] saving {} results to {}",
             reports.len(),
-            path.display(),
-            std::env::current_dir()
-                .map(|d| d.display().to_string())
-                .unwrap_or_else(|_| "unknown".to_string()),
+            out.join(filename).display(),
         );
-        if let Err(e) = Self::save_json(reports, &path) {
-            panic!("failed to write bench report to {}: {e}", path.display());
+        if let Err(e) = Self::save_json(reports, filename) {
+            panic!("failed to write bench report to bench-output/{filename}: {e}");
         }
     }
 }

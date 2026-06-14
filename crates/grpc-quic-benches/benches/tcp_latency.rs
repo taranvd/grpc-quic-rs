@@ -50,7 +50,7 @@ fn bench_tcp_latency(c: &mut Criterion) {
     }
 
     shutdown_servers(servers);
-    BenchResult::save_json_or_panic(&reports, "bench-output/tcp_latency.json");
+    BenchResult::save_json_or_panic(&reports, "tcp_latency.json");
 }
 
 criterion_group!(benches, bench_tcp_latency);
