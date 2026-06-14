@@ -65,4 +65,9 @@ impl QuicConnection {
     pub fn is_closed(&self) -> bool {
         self.inner.close_reason().is_some()
     }
+
+    /// Access the underlying [`quinn::Connection`].
+    pub fn get_ref(&self) -> &quinn::Connection {
+        &self.inner
+    }
 }

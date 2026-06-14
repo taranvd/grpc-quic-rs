@@ -11,10 +11,13 @@ keywords.workspace    = true
 categories.workspace  = true
 
 [dependencies]
+grpc-quic-core      = { path = "../grpc-quic-core" }
 grpc-quic-transport = { path = "../grpc-quic-transport" }
 grpc-quic-metrics   = { path = "../grpc-quic-metrics" }
 
 quinn       = { workspace = true }
+h3          = { workspace = true }
+h3-quinn    = { workspace = true }
 tokio       = { workspace = true }
 bytes       = { workspace = true }
 thiserror   = { workspace = true }
@@ -24,7 +27,6 @@ tower       = { workspace = true }
 http        = { workspace = true }
 http-body   = { workspace = true }
 tonic       = { workspace = true }
-pin-project-lite = { workspace = true }
 
 [dev-dependencies]
 grpc-quic-client    = { path = "../grpc-quic-client" }

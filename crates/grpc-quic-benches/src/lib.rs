@@ -69,7 +69,7 @@ pub fn make_tls_configs() -> (TlsConfig, TlsConfig) {
         .with_no_client_auth()
         .with_single_cert(vec![server_cert.clone()], server_key)
         .unwrap();
-    server_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     let mut root_store = rustls::RootCertStore::empty();
     root_store.add(server_cert).unwrap();
@@ -79,7 +79,7 @@ pub fn make_tls_configs() -> (TlsConfig, TlsConfig) {
         .unwrap()
         .with_root_certificates(root_store)
         .with_no_client_auth();
-    client_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+    client_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     (
         TlsConfig::server(server_crypto),

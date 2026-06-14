@@ -50,7 +50,7 @@ impl TlsConfig {
             .unwrap()
             .with_root_certificates(root_store)
             .with_no_client_auth();
-        client_crypto.alpn_protocols = vec![b"grpc-quic".to_vec()];
+        client_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
         Self::client(client_crypto)
     }

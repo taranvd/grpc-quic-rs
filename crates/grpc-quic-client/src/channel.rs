@@ -1,27 +1,11 @@
-//! QuicChannel — tower::Service adapter that bridges tonic to QUIC streams.
-//!
-//! ## Forwarding principle
-//!
-//! grpc-quic **MUST NOT** interpret, modify, or re-encode gRPC payloads.
-//! It only forwards bytes between tonic and QUIC streams.
-//!
-//! ```text
-//! tonic (encodes gRPC payload as Bytes)
-//!     ↓  [opaque Bytes — untouched by grpc-quic]
-//! QuicChannel  →  open QUIC bi-stream  →  write path header + Bytes
-//!     ↑  [opaque Bytes — untouched by grpc-quic]
-//! tonic (decodes gRPC response from Bytes)
-//! ```
-
 use std::{
     net::SocketAddr,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use bytes::{Bytes, BytesMut};
-use http_body::{Body, Frame};
-use quinn::RecvStream;
+use bytes::Bytes;
+use http_body::Body;
 use std::pin::Pin;
 use tokio::sync::Semaphore;
 use tower::Service;
@@ -33,18 +17,8 @@ use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
 
-/// Maximum bytes buffered in [`QuicResponseBody`] while parsing gRPC frames.
-///
-/// Once the buffer reaches this size, reading from the QUIC stream pauses,
-/// applying backpressure to the sender via QUIC flow control.  128 KB is
-/// enough to hold several gRPC data frames plus the trailer suffix
-/// (at most 6 + 65535 bytes for the trailer block alone).
-const MAX_RESPONSE_BUF_SIZE: usize = 128 * 1024;
-
-/// Default maximum number of concurrent in-flight RPC calls per channel.
 const DEFAULT_CONCURRENCY_LIMIT: usize = 256;
 
-/// Builder for [`QuicChannel`].
 #[derive(Debug)]
 pub struct QuicChannelBuilder {
     retry: RetryPolicy,
@@ -67,59 +41,34 @@ impl Default for QuicChannelBuilder {
 }
 
 impl QuicChannelBuilder {
-    /// Override the retry policy.
     pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry = policy;
         self
     }
 
-    /// Set the TLS server name (SNI). Defaults to the IP string of the address.
     pub fn server_name(mut self, name: impl Into<String>) -> Self {
         self.server_name = Some(name.into());
         self
     }
 
-    /// Override the TLS configuration (required for mTLS or custom CAs).
     pub fn tls(mut self, tls: TlsConfig) -> Self {
         self.tls = Some(tls);
         self
     }
 
-    /// Set a limit on the number of concurrent in-flight RPC calls.
-    ///
-    /// When the limit is reached, [`poll_ready`](tower::Service::poll_ready)
-    /// returns `Pending`, applying backpressure to tonic.  Defaults to 256.
     pub fn concurrency_limit(mut self, limit: usize) -> Self {
         self.concurrency_limit = limit;
         self
     }
 
-    /// Set a service resolver for discovery-based addressing.
-    ///
-    /// When configured, `connect()` first tries to parse the input as a raw
-    /// socket address. If that fails, it falls back to resolving via this
-    /// resolver. If the resolved list is empty, an error is returned.
     pub fn resolver(mut self, resolver: impl Resolver) -> Self {
         self.resolver = Some(Box::new(resolver));
         self
     }
 
-    /// Parse `addr` and build a [`QuicChannel`] ready for use with tonic.
-    ///
-    /// No network activity happens here; connections are established lazily.
-    ///
-    /// If a [`resolver`](Self::resolver) has been configured, `addr` is first
-    /// tried as a raw socket address; if that fails, the resolver is consulted.
-    /// The first resolved address is used.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ClientError`] if `addr` cannot be parsed and no resolver
-    /// is configured, or if the resolver returns an empty list.
     #[tracing::instrument(skip(self, addr))]
     pub async fn connect(self, addr: impl Into<String>) -> Result<QuicChannel, ClientError> {
         let addr_str = addr.into();
-
         let remote = if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             addr
         } else if let Some(ref resolver) = self.resolver {
@@ -135,9 +84,7 @@ impl QuicChannelBuilder {
                 "invalid address and no resolver configured: {addr_str}"
             )));
         };
-
         let server_name = self.server_name.unwrap_or_else(|| remote.ip().to_string());
-
         Ok(QuicChannel {
             remote,
             server_name,
@@ -149,42 +96,8 @@ impl QuicChannelBuilder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Request / response body newtype
-// ---------------------------------------------------------------------------
-
-/// Opaque response body — wraps a pre-buffered response.
-///
-/// grpc-quic never inspects the contents; it is passed directly to tonic.
-pub struct QuicResponseBody {
-    buf: BytesMut,
-    data_delivered: bool,
-}
-
-impl std::fmt::Debug for QuicResponseBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QuicResponseBody")
-            .field("buf", &self.buf)
-            .field("data_delivered", &self.data_delivered)
-            .finish()
-    }
-}
-
-/// Read all bytes from a QUIC receive stream.
-async fn read_recv_stream(recv: &mut RecvStream) -> Result<BytesMut, ClientError> {
-    let raw = recv
-        .read_to_end(MAX_RESPONSE_BUF_SIZE)
-        .await
-        .map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
-    Ok(BytesMut::from(&raw[..]))
-}
-
-/// Buffer the entire tonic body into a single `Bytes`.
-///
-/// For unary RPCs the body is already fully available in tonic's internals,
-/// so this is a cheap copy.  For streaming requests the body must be fully
-/// buffered to support retries — consider disabling retry for large uploads.
 async fn buffer_body(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientError> {
+    use bytes::BytesMut;
     let mut buf = BytesMut::new();
     while let Some(frame_res) =
         futures::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
@@ -198,112 +111,6 @@ async fn buffer_body(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientErro
     Ok(buf.freeze())
 }
 
-impl QuicResponseBody {
-    pub(crate) fn new(buf: BytesMut) -> Self {
-        Self {
-            buf,
-            data_delivered: false,
-        }
-    }
-}
-
-impl http_body::Body for QuicResponseBody {
-    type Data = Bytes;
-    type Error = ClientError;
-
-    fn poll_frame(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        let this = self.get_mut();
-        let n = this.buf.len();
-
-        if n == 0 {
-            return Poll::Ready(None);
-        }
-
-        if !this.data_delivered {
-            if n < 5 {
-                return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
-                    "incomplete gRPC frame header: {n} bytes"
-                )))));
-            }
-            let len =
-                u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
-            let total_len = 5 + len;
-            if n < total_len {
-                return Poll::Ready(Some(Err(ClientError::InvalidResponse(
-                    "truncated gRPC frame".into(),
-                ))));
-            }
-            this.data_delivered = true;
-            let data = this.buf.split_to(total_len).freeze();
-            return Poll::Ready(Some(Ok(Frame::data(data))));
-        }
-
-        if n < 6 {
-            return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
-                "incomplete trailer header: {n} bytes"
-            )))));
-        }
-        let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
-        let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
-        let trailer_len = 6 + msg_len;
-        if n < trailer_len {
-            return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
-                "incomplete trailer message: {n} < {trailer_len}"
-            )))));
-        }
-        let msg = String::from_utf8(this.buf[6..trailer_len].to_vec())
-            .unwrap_or_else(|_| "invalid utf-8 message".to_string());
-        this.buf.clear();
-
-        let mut trailers = http::HeaderMap::new();
-        trailers.insert(
-            "grpc-status",
-            http::HeaderValue::from_str(&status.to_string()).unwrap(),
-        );
-        if !msg.is_empty() {
-            trailers.insert("grpc-message", http::HeaderValue::from_str(&msg).unwrap());
-        }
-        Poll::Ready(Some(Ok(Frame::trailers(trailers))))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// QuicChannel
-// ---------------------------------------------------------------------------
-
-/// A tonic-compatible channel that routes gRPC calls over QUIC streams.
-///
-/// Pass this directly to any tonic-generated `*Client::new(channel)`.
-///
-/// ```rust,no_run
-/// use grpc_quic_client::QuicChannel;
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let channel = QuicChannel::builder()
-///     .connect("127.0.0.1:50051")
-///     .await?;
-/// // let client = MyServiceClient::new(channel);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Wire envelope per QUIC bi-directional stream
-///
-/// ```text
-/// ┌─ Request envelope (client → server) ──────────────────────┐
-/// │  [u16 BE: path_len][path_bytes][gRPC payload from tonic…]  │
-/// └────────────────────────────────────────────────────────────┘
-/// ┌─ Response envelope (server → client) ─────────────────────┐
-/// │  [gRPC response payload from tonic…][u32 BE: grpc_status]  │
-/// └────────────────────────────────────────────────────────────┘
-/// ```
-///
-/// The `path_len` / `path_bytes` header is **routing metadata only** — it is
-/// the HTTP path tonic already put on the request (e.g. `/pkg.Svc/Method`).
-/// The gRPC payload bytes are **forwarded verbatim** and never interpreted.
 #[derive(Clone, Debug)]
 pub struct QuicChannel {
     remote: SocketAddr,
@@ -315,22 +122,16 @@ pub struct QuicChannel {
 }
 
 impl QuicChannel {
-    /// Return a builder to configure and create a channel.
     pub fn builder() -> QuicChannelBuilder {
         QuicChannelBuilder::default()
     }
 }
 
-// ---------------------------------------------------------------------------
-// tower::Service impl — full I/O implementation arrives in Phase 4.
-// ---------------------------------------------------------------------------
-
 impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
-    type Response = http::Response<QuicResponseBody>;
+    type Response = http::Response<grpc_quic_core::body::ClientRecvBody>;
     type Error = ClientError;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
+    type Future =
+        Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -344,38 +145,23 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
         let retry = self.retry.clone();
         let concurrency_limit = self.concurrency_limit.clone();
 
-        trace!(
-            remote = %remote,
-            path = %req.uri().path(),
-            "dispatching gRPC call over QUIC"
-        );
+        trace!(remote = %remote, path = %req.uri().path(), "dispatching gRPC call over HTTP/3");
 
         Box::pin(async move {
-            // Acquire a concurrency permit — this is the true backpressure
             let _permit = concurrency_limit
                 .acquire_owned()
                 .await
                 .map_err(|_| ClientError::Closed)?;
 
             let path = req.uri().path().to_owned();
-            let span = tracing::info_span!(
-                "grpc_quic.call",
-                remote = %remote,
-                path = %path,
-            );
-            let _guard = span.enter();
-
+            let authority = req
+                .uri()
+                .authority()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| server_name.clone());
             let (_, body) = req.into_parts();
-            drop(_guard);
-            let body_bytes = buffer_body(body).await?;
-            let _guard = span.enter();
 
-            if path.len() > u16::MAX as usize {
-                return Err(ClientError::InvalidResponse(format!(
-                    "request path too long: {}",
-                    path.len()
-                )));
-            }
+            let body_bytes = buffer_body(body).await?;
 
             let mut last_error = None;
 
@@ -388,7 +174,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                 }
 
                 let tls_config = tls.clone().unwrap_or_else(TlsConfig::client_default);
-                let conn = match pool
+                let entry = match pool
                     .get_or_connect(remote, |addr| {
                         let tls_config = tls_config.clone();
                         let server_name = server_name.clone();
@@ -400,7 +186,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     })
                     .await
                 {
-                    Ok(c) => c,
+                    Ok(e) => e,
                     Err(e) => {
                         last_error = Some(e);
                         pool.remove(&remote).await;
@@ -408,48 +194,60 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     }
                 };
 
-                let (mut send, mut recv) = match conn.open_bi().await {
-                    Ok(pair) => {
+                record_request("client", &path);
+
+                let uri = format!("https://{}{}", authority, path);
+                let h3_req = http::Request::builder()
+                    .method(http::Method::POST)
+                    .uri(&uri)
+                    .header("content-type", "application/grpc")
+                    .header("te", "trailers")
+                    .body(())
+                    .map_err(|e| ClientError::InvalidResponse(e.to_string()))?;
+
+                let mut stream = match entry.h3.send_request(h3_req).await {
+                    Ok(s) => {
                         record_stream("client");
-                        pair
+                        s
                     }
                     Err(e) => {
-                        last_error = Some(ClientError::Transport(e));
+                        last_error =
+                            Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
                         pool.remove(&remote).await;
                         continue;
                     }
                 };
 
-                record_request("client", &path);
-
-                // Write request: header (path + len) + buffered body + finish
-                let mut header_buf = Vec::with_capacity(2 + path.len());
-                header_buf.extend_from_slice(&(path.len() as u16).to_be_bytes());
-                header_buf.extend_from_slice(path.as_bytes());
-
-                if let Err(e) = send.write_all(&header_buf).await {
-                    let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
-                    last_error = Some(io_err);
-                    continue;
+                if !body_bytes.is_empty() {
+                    if let Err(e) = stream.send_data(body_bytes.clone()).await {
+                        last_error =
+                            Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
+                        continue;
+                    }
+                    record_bytes_sent("client", body_bytes.len() as u64);
                 }
-                record_bytes_sent("client", (2 + path.len()) as u64);
 
-                if let Err(e) = send.write_all(&body_bytes).await {
-                    let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
-                    last_error = Some(io_err);
-                    continue;
-                }
-                record_bytes_sent("client", body_bytes.len() as u64);
-
-                if let Err(e) = send.finish() {
-                    let io_err = ClientError::StreamIo(std::io::Error::other(e.to_string()));
-                    last_error = Some(io_err);
+                if let Err(e) = stream.finish().await {
+                    last_error = Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
                     continue;
                 }
 
-                let resp_buf = read_recv_stream(&mut recv).await?;
-                let resp = http::Response::new(QuicResponseBody::new(resp_buf));
-                return Ok(resp);
+                let resp = match stream.recv_response().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        last_error =
+                            Some(ClientError::StreamIo(std::io::Error::other(e.to_string())));
+                        continue;
+                    }
+                };
+
+                let (_send, recv) = stream.split();
+                let body = grpc_quic_core::body::ClientRecvBody::new(recv);
+
+                let mut response = http::Response::new(body);
+                *response.status_mut() = resp.status();
+                *response.headers_mut() = resp.headers().clone();
+                return Ok(response);
             }
 
             Err(last_error.unwrap_or_else(|| ClientError::RetriesExhausted {
