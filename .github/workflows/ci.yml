@@ -110,7 +110,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-reports
-          path: target/bench-results/*.json
+          path: bench-output/*.json
 
   # ── Nightly / manual: full performance CI ────────────────────────────────
   bench-nightly:
@@ -144,13 +144,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-bench-reports
-          path: target/bench-results/*.json
+          path: bench-output/*.json
 
       - name: Generate summary table
         if: always()
         run: |
           echo "## Nightly Benchmark Results" >> $GITHUB_STEP_SUMMARY
-          for f in target/bench-results/*.json; do
+          for f in bench-output/*.json; do
             echo "### $(basename $f .json)" >> $GITHUB_STEP_SUMMARY
             cat "$f" | python3 -m json.tool >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
           done

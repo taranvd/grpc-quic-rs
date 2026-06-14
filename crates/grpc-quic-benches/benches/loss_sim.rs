@@ -5,7 +5,7 @@
 //! On non-Linux systems the benchmark is a no-op.
 //!
 //! Loss percentage is read from the `LOSS_PERCENT` env variable (default 5).
-//! JSON report goes to `target/bench-results/`.
+//! JSON report goes to `bench-output/`.
 
 #![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 
@@ -89,7 +89,7 @@ fn bench_loss(c: &mut Criterion) {
             ));
         }
         group.finish();
-        let _ = BenchResult::save_json(&reports, "target/bench-results/quic_loss.json");
+        let _ = BenchResult::save_json(&reports, "bench-output/quic_loss.json");
     }
 
     // ── TCP under loss ──────────────────────────────────────────────────
@@ -130,7 +130,7 @@ fn bench_loss(c: &mut Criterion) {
             ));
         }
         group.finish();
-        let _ = BenchResult::save_json(&reports, "target/bench-results/tcp_loss.json");
+        let _ = BenchResult::save_json(&reports, "bench-output/tcp_loss.json");
     }
 
     shutdown_servers(servers);

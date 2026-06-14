@@ -52,7 +52,7 @@ fn bench_quic_latency(c: &mut Criterion) {
     }
 
     shutdown_servers(servers);
-    let _ = BenchResult::save_json(&reports, "target/bench-results/quic_latency.json");
+    let _ = BenchResult::save_json(&reports, "bench-output/quic_latency.json");
 }
 
 criterion_group!(benches, bench_quic_latency);
