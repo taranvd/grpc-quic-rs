@@ -23,15 +23,12 @@ use bytes::{Bytes, BytesMut};
 use http_body::{Body, Frame};
 use quinn::RecvStream;
 use std::pin::Pin;
-use tokio::io::AsyncRead;
 use tokio::sync::Semaphore;
 use tower::Service;
 use tracing::trace;
 
 use grpc_quic_discovery::Resolver;
-use grpc_quic_metrics::{
-    record_bytes_received, record_bytes_sent, record_reconnect, record_request, record_stream,
-};
+use grpc_quic_metrics::{record_bytes_sent, record_reconnect, record_request, record_stream};
 use grpc_quic_transport::TlsConfig;
 
 use crate::{error::ClientError, pool::ConnectionPool, retry::RetryPolicy};
@@ -156,15 +153,11 @@ impl QuicChannelBuilder {
 // Request / response body newtype
 // ---------------------------------------------------------------------------
 
-/// Opaque response body — wraps a [`Bytes`] payload without any interpretation.
+/// Opaque response body — wraps a pre-buffered response.
 ///
 /// grpc-quic never inspects the contents; it is passed directly to tonic.
 pub struct QuicResponseBody {
-    recv: RecvStream,
     buf: BytesMut,
-    eof: bool,
-    /// Set to `true` once the gRPC data frame has been delivered.
-    /// After this, only trailers are accepted.
     data_delivered: bool,
 }
 
@@ -172,10 +165,18 @@ impl std::fmt::Debug for QuicResponseBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuicResponseBody")
             .field("buf", &self.buf)
-            .field("eof", &self.eof)
             .field("data_delivered", &self.data_delivered)
             .finish()
     }
+}
+
+/// Read all bytes from a QUIC receive stream.
+async fn read_recv_stream(recv: &mut RecvStream) -> Result<BytesMut, ClientError> {
+    let raw = recv
+        .read_to_end(MAX_RESPONSE_BUF_SIZE)
+        .await
+        .map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
+    Ok(BytesMut::from(&raw[..]))
 }
 
 /// Buffer the entire tonic body into a single `Bytes`.
@@ -198,11 +199,9 @@ async fn buffer_body(mut body: tonic::body::BoxBody) -> Result<Bytes, ClientErro
 }
 
 impl QuicResponseBody {
-    pub(crate) fn new(recv: RecvStream) -> Self {
+    pub(crate) fn new(buf: BytesMut) -> Self {
         Self {
-            recv,
-            buf: BytesMut::with_capacity(MAX_RESPONSE_BUF_SIZE),
-            eof: false,
+            buf,
             data_delivered: false,
         }
     }
@@ -213,99 +212,61 @@ impl http_body::Body for QuicResponseBody {
     type Error = ClientError;
 
     fn poll_frame(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        let this = &mut *self;
-
-        // 1. Read one chunk from the stream (capped at MAX_RESPONSE_BUF_SIZE)
-        if !this.eof && this.buf.len() < MAX_RESPONSE_BUF_SIZE {
-            let mut temp_buf = [0u8; 8192];
-            let mut read_buf = tokio::io::ReadBuf::new(&mut temp_buf);
-            match Pin::new(&mut this.recv).poll_read(cx, &mut read_buf) {
-                Poll::Ready(Ok(())) => {
-                    let filled = read_buf.filled();
-                    if filled.is_empty() {
-                        this.eof = true;
-                    } else {
-                        record_bytes_received("client", filled.len() as u64);
-                        this.buf.extend_from_slice(filled);
-                    }
-                }
-                Poll::Ready(Err(e)) => {
-                    return Poll::Ready(Some(Err(ClientError::StreamIo(e))));
-                }
-                Poll::Pending => {}
-            }
-        }
-
-        // 2. Parse frames from `buf`
+        let this = self.get_mut();
         let n = this.buf.len();
 
-        // Try trailers first: [u32 status][u16 msg_len][msg]
-        if n >= 6 {
-            let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
-            let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
-            if 6 + msg_len == n {
-                let msg_bytes = this.buf[6..6 + msg_len].to_vec();
-                let msg = String::from_utf8(msg_bytes)
-                    .unwrap_or_else(|_| "invalid utf-8 message".to_string());
-                this.buf.clear();
-
-                let mut trailers = http::HeaderMap::new();
-                trailers.insert(
-                    "grpc-status",
-                    http::HeaderValue::from_str(&status.to_string()).unwrap(),
-                );
-                if !msg.is_empty() {
-                    trailers.insert("grpc-message", http::HeaderValue::from_str(&msg).unwrap());
-                }
-                return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
-            }
-        }
-
-        // If data frame already delivered, remaining bytes must be trailers
-        if this.data_delivered {
-            if this.eof {
-                if n > 0 {
-                    return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
-                        "trailing garbage bytes at end of stream: {n} bytes"
-                    )))));
-                }
-                return Poll::Ready(None);
-            }
-            return Poll::Pending;
-        }
-
-        // Otherwise, try to parse a gRPC data frame
-        if n >= 5 {
-            let len =
-                u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
-            let total_len = 5 + len;
-
-            if n >= total_len {
-                this.data_delivered = true;
-                let data = this.buf.split_to(total_len).freeze();
-                return Poll::Ready(Some(Ok(Frame::data(data))));
-            } else if this.eof {
-                return Poll::Ready(Some(Err(ClientError::InvalidResponse(
-                    "truncated gRPC frame".into(),
-                ))));
-            } else {
-                return Poll::Pending;
-            }
-        }
-
-        if this.eof {
-            if n > 0 {
-                return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
-                    "trailing garbage bytes at end of stream: {n} bytes"
-                )))));
-            }
+        if n == 0 {
             return Poll::Ready(None);
         }
 
-        Poll::Pending
+        if !this.data_delivered {
+            if n < 5 {
+                return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
+                    "incomplete gRPC frame header: {n} bytes"
+                )))));
+            }
+            let len =
+                u32::from_be_bytes([this.buf[1], this.buf[2], this.buf[3], this.buf[4]]) as usize;
+            let total_len = 5 + len;
+            if n < total_len {
+                return Poll::Ready(Some(Err(ClientError::InvalidResponse(
+                    "truncated gRPC frame".into(),
+                ))));
+            }
+            this.data_delivered = true;
+            let data = this.buf.split_to(total_len).freeze();
+            return Poll::Ready(Some(Ok(Frame::data(data))));
+        }
+
+        if n < 6 {
+            return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
+                "incomplete trailer header: {n} bytes"
+            )))));
+        }
+        let status = u32::from_be_bytes([this.buf[0], this.buf[1], this.buf[2], this.buf[3]]);
+        let msg_len = u16::from_be_bytes([this.buf[4], this.buf[5]]) as usize;
+        let trailer_len = 6 + msg_len;
+        if n < trailer_len {
+            return Poll::Ready(Some(Err(ClientError::InvalidResponse(format!(
+                "incomplete trailer message: {n} < {trailer_len}"
+            )))));
+        }
+        let msg = String::from_utf8(this.buf[6..trailer_len].to_vec())
+            .unwrap_or_else(|_| "invalid utf-8 message".to_string());
+        this.buf.clear();
+
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert(
+            "grpc-status",
+            http::HeaderValue::from_str(&status.to_string()).unwrap(),
+        );
+        if !msg.is_empty() {
+            trailers.insert("grpc-message", http::HeaderValue::from_str(&msg).unwrap());
+        }
+        Poll::Ready(Some(Ok(Frame::trailers(trailers))))
     }
 }
 
@@ -447,7 +408,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     }
                 };
 
-                let (mut send, recv) = match conn.open_bi().await {
+                let (mut send, mut recv) = match conn.open_bi().await {
                     Ok(pair) => {
                         record_stream("client");
                         pair
@@ -486,7 +447,8 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     continue;
                 }
 
-                let resp = http::Response::new(QuicResponseBody::new(recv));
+                let resp_buf = read_recv_stream(&mut recv).await?;
+                let resp = http::Response::new(QuicResponseBody::new(resp_buf));
                 return Ok(resp);
             }
 

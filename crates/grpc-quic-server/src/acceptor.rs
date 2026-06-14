@@ -8,17 +8,20 @@ use http_body::{Body, Frame};
 use quinn::{RecvStream, SendStream};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::AsyncRead;
 
-/// Request body that reads raw bytes from a QUIC receive stream.
+/// Request body backed by a pre-buffered byte slice.
 pub struct QuicRequestBody {
-    recv: RecvStream,
+    buf: Bytes,
+    delivered: bool,
 }
 
 impl QuicRequestBody {
-    /// Create a new request body.
-    pub fn new(recv: RecvStream) -> Self {
-        Self { recv }
+    /// Create a new request body from pre-read bytes.
+    pub fn new(buf: Bytes) -> Self {
+        Self {
+            buf,
+            delivered: false,
+        }
     }
 }
 
@@ -27,27 +30,19 @@ impl Body for QuicRequestBody {
     type Error = std::io::Error;
 
     fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        let mut buf = vec![0u8; 8192];
-        let mut read_buf = tokio::io::ReadBuf::new(&mut buf);
-
-        match Pin::new(&mut self.recv).poll_read(cx, &mut read_buf) {
-            Poll::Ready(Ok(())) => {
-                let filled = read_buf.filled();
-                if filled.is_empty() {
-                    Poll::Ready(None)
-                } else {
-                    let len = filled.len() as u64;
-                    record_bytes_received("server", len);
-                    let bytes = Bytes::copy_from_slice(filled);
-                    Poll::Ready(Some(Ok(Frame::data(bytes))))
-                }
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
-            Poll::Pending => Poll::Pending,
+        let this = self.get_mut();
+        if this.delivered {
+            return Poll::Ready(None);
         }
+        this.delivered = true;
+        if this.buf.is_empty() {
+            return Poll::Ready(None);
+        }
+        let data = std::mem::take(&mut this.buf);
+        Poll::Ready(Some(Ok(Frame::data(data))))
     }
 }
 
@@ -88,8 +83,15 @@ where
     record_stream("server");
     record_request("server", &path);
 
-    // 3. Build request
-    let request_body = QuicRequestBody::new(recv);
+    // 3. Eagerly buffer the request body, then build request
+    const MAX_BODY_SIZE: usize = 128 * 1024;
+    let raw_body = recv
+        .read_to_end(MAX_BODY_SIZE)
+        .await
+        .map_err(|e| ServerError::StreamIo(std::io::Error::other(e.to_string())))?;
+    let body_len = raw_body.len() as u64;
+    record_bytes_received("server", body_len);
+    let request_body = QuicRequestBody::new(Bytes::from(raw_body));
     let box_body = tonic::body::boxed(request_body);
     let mut request = http::Request::new(box_body);
     *request.uri_mut() = path
