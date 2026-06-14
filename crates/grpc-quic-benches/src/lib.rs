@@ -43,19 +43,9 @@ impl BenchService for EchoService {
 
 // ─── Default payload sizes & concurrency levels ────────────────────────────
 
-pub const PAYLOAD_SIZES: &[usize] = &[64, 256, 1024, 4096, 16384];
-pub const QUICK_SIZES: &[usize] = &[64, 256, 1024, 4096];
+pub const PAYLOAD_SIZES: &[usize] = &[64, 256, 1024, 4096];
 pub const CONCURRENCY: &[usize] = &[1, 4, 8, 16];
 pub const LOSS_PERCENTS: &[u32] = &[0, 1, 5];
-
-/// Payload sizes for the current run — excludes 16384 in quick mode.
-pub fn bench_sizes() -> &'static [usize] {
-    if is_quick() {
-        QUICK_SIZES
-    } else {
-        PAYLOAD_SIZES
-    }
-}
 
 // ── TLS helpers ────────────────────────────────────────────────────────────
 
@@ -367,19 +357,4 @@ pub fn make_payload(size: usize) -> Payload {
     Payload {
         body: vec![0u8; size],
     }
-}
-
-// ── Mode flags ──────────────────────────────────────────────────────────────
-
-/// Returns `true` when the `--deterministic` CLI flag (or `DETERMINISTIC=1`)
-/// is set.
-pub fn is_deterministic() -> bool {
-    std::env::var("DETERMINISTIC").as_deref() == Ok("1")
-        || std::env::args().any(|a| a == "--deterministic")
-}
-
-/// Returns `true` when `QUICK=1` env is set (CI quick-smoke mode).
-/// Excludes large payloads (16384) to keep CI fast.
-pub fn is_quick() -> bool {
-    std::env::var("QUICK").as_deref() == Ok("1")
 }

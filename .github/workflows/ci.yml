@@ -85,7 +85,7 @@ jobs:
 
       - name: Quick bench (no loss, small samples)
         run: >
-          QUICK=1 cargo bench -p grpc-quic-benches
+          cargo bench -p grpc-quic-benches
           --bench quic_latency --bench handshake
           -- --quick
 
