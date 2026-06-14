@@ -159,24 +159,28 @@ fn setup_servers(rt: &Runtime, server_tls: TlsConfig) -> BenchServers {
 
 // ── tc (netem) guard ─────────────────────────────────────────────────────────
 
-/// Runs `tc` (or `sudo tc`) with the given args, returns success.
+/// Runs `tc` (or `sudo tc`) with the given args.  Silently ignores failures
+/// if the qdisc was already applied (e.g. by a CI step) — returns `true`
+/// if the operation succeeded OR if the qdisc already exists.
 fn tc(args: &[&str]) -> bool {
     let run = |cmd: &str| -> Option<std::process::Output> {
         std::process::Command::new(cmd).args(args).output().ok()
     };
-    if let Some(ref o) = run("tc") {
-        if o.status.success() {
-            return true;
-        }
-        // Retry with sudo if direct call failed (e.g. CI without CAP_NET_ADMIN)
-        if let Some(ref o) = run("sudo") {
+    for cmd in &["tc", "sudo"] {
+        if let Some(ref o) = run(cmd) {
             if o.status.success() {
                 return true;
             }
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            // "File exists" means the qdisc was already configured — not a failure.
+            if stderr.contains("File exists") {
+                return true;
+            }
+            // Only log unexpected failures on the first attempt
+            if cmd == &"tc" {
+                eprintln!("[tc] note: {} (will try sudo)", stderr.trim());
+            }
         }
-        eprintln!("[tc] warning: {}", String::from_utf8_lossy(&o.stderr));
-    } else {
-        eprintln!("[tc] binary not found");
     }
     false
 }
