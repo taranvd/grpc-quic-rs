@@ -1,6 +1,6 @@
 # grpc-quic-rs
 
-> **gRPC over HTTP/3 over QUIC for tonic** — replaces HTTP/TCP with standards-compliant HTTP/3 (h3) over QUIC while preserving full gRPC semantics.
+> **gRPC over HTTP/3 for tonic** — enables standards-compliant gRPC transport over HTTP/3 (h3) and QUIC while preserving full gRPC semantics and API compatibility..
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
