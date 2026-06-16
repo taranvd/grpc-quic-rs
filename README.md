@@ -84,25 +84,52 @@ flowchart TB
 
 ## Quick start
 
+> **Cargo.toml:**
+> ```toml
+> [dependencies]
+> grpc-quic = { version = "0.1", features = ["full"] }
+> ```
+
+### Server (development — self-signed cert)
+
 ```rust
-// Client
-use grpc_quic::client::QuicChannel;
+use grpc_quic::{server::QuicServer, transport::TlsConfig};
+
+let tls = TlsConfig::server_self_signed(vec!["localhost", "127.0.0.1"])?;
+
+QuicServer::builder()
+    .tls(tls)
+    .build()
+    .serve("0.0.0.0:50051".parse()?, MyServiceServer::new(service))
+    .await?;
+```
+
+### Server (production — PEM files)
+
+```rust
+let tls = TlsConfig::server_from_pem("cert.pem", "key.pem")?;
+```
+
+### Client (development — accepts any cert)
+
+```rust
+use grpc_quic::{client::QuicChannel, transport::TlsConfig};
 
 let channel = QuicChannel::builder()
+    .tls(TlsConfig::client_insecure())
     .connect("127.0.0.1:50051")
     .await?;
 
 let mut client = MyServiceClient::new(channel);
-let response = client.my_method(request).await?;
+let response = client.say_hello(Request::new(HelloRequest { name: "world".into() })).await?;
 ```
 
-```rust
-// Server
-use grpc_quic::server::QuicServer;
+### Client (production — webpki roots)
 
-QuicServer::builder()
-    .tls(tls_config)
-    .serve("0.0.0.0:50051".parse()?)
+```rust
+let channel = QuicChannel::builder()
+    .tls(TlsConfig::client_default())
+    .connect("api.example.com:50051")
     .await?;
 ```
 

@@ -9,31 +9,19 @@ pub mod pb {
 use pb::streaming_service_client::StreamingServiceClient;
 use pb::HelloRequest;
 
-fn load_client_tls() -> TlsConfig {
-    let cert_der =
-        std::fs::read("cert.der").expect("failed to read cert.der; start the server first!");
-    let server_cert = rustls::pki_types::CertificateDer::from(cert_der);
-
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.add(server_cert).unwrap();
-
-    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-
-    let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    client_crypto.alpn_protocols = vec![b"h3".to_vec()];
-
-    TlsConfig::client(client_crypto)
+/// When running against a server with a proper CA-signed certificate, use
+/// `TlsConfig::client_default()` which validates against webpki roots.
+/// For the development example (self-signed cert), we use an insecure client
+/// that accepts any certificate.
+fn client_tls() -> TlsConfig {
+    TlsConfig::client_insecure()
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let tls = load_client_tls();
+    let tls = client_tls();
     let addr = "127.0.0.1:50051";
 
     println!("Connecting to gRPC-over-QUIC server at {}...", addr);
