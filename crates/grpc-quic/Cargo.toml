@@ -18,7 +18,8 @@ grpc-quic-metrics   = { path = "../grpc-quic-metrics", version = "0.1.0", option
 grpc-quic-discovery = { path = "../grpc-quic-discovery", version = "0.1.0", optional = true }
 
 [features]
-default  = []
-metrics  = ["dep:grpc-quic-metrics"]
-discovery = ["dep:grpc-quic-discovery"]
-full     = ["metrics", "discovery"]
+default    = []
+metrics    = ["dep:grpc-quic-metrics"]
+discovery  = ["dep:grpc-quic-discovery"]
+dev-certs  = ["grpc-quic-transport/dev-certs"]
+full       = ["metrics", "discovery", "dev-certs"]

@@ -20,8 +20,6 @@ tokio = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rcgen = { workspace = true }
-rustls = { workspace = true }
 tokio-stream = { workspace = true }
 async-stream = { workspace = true }
 

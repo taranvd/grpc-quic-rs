@@ -16,7 +16,6 @@ pub struct MyStreamingService;
 
 #[tonic::async_trait]
 impl StreamingService for MyStreamingService {
-    // Unary
     async fn say_hello(
         &self,
         request: Request<HelloRequest>,
@@ -28,7 +27,6 @@ impl StreamingService for MyStreamingService {
         }))
     }
 
-    // Client Streaming
     async fn lots_of_requests(
         &self,
         request: Request<tonic::Streaming<HelloRequest>>,
@@ -49,7 +47,6 @@ impl StreamingService for MyStreamingService {
         }))
     }
 
-    // Server Streaming
     type LotsOfRepliesStream = Pin<Box<dyn Stream<Item = Result<HelloResponse, Status>> + Send>>;
 
     async fn lots_of_replies(
@@ -72,7 +69,6 @@ impl StreamingService for MyStreamingService {
         Ok(Response::new(Box::pin(output_stream)))
     }
 
-    // Bidirectional Streaming
     type BidiHelloStream = Pin<Box<dyn Stream<Item = Result<HelloResponse, Status>> + Send>>;
 
     async fn bidi_hello(
@@ -96,49 +92,17 @@ impl StreamingService for MyStreamingService {
     }
 }
 
-fn generate_and_save_certs() -> TlsConfig {
-    let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
-    let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-
-    let cert_der = cert.cert.der().to_vec();
-    let key_der = cert.key_pair.serialize_der();
-
-    // Save cert_der to file so client can read it
-    std::fs::write("cert.der", &cert_der).unwrap();
-
-    let server_cert = rustls::pki_types::CertificateDer::from(cert_der);
-    let server_key = rustls::pki_types::PrivateKeyDer::Pkcs8(
-        rustls::pki_types::PrivatePkcs8KeyDer::from(key_der),
-    );
-
-    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-
-    let mut server_crypto = rustls::ServerConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![server_cert], server_key)
-        .unwrap();
-    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
-    server_crypto.max_early_data_size = u32::MAX;
-
-    TlsConfig::server(server_crypto)
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let tls_config = generate_and_save_certs();
+    let tls = TlsConfig::server_self_signed(vec!["localhost", "127.0.0.1"])?;
     let addr: SocketAddr = "127.0.0.1:50051".parse()?;
 
     let service = MyStreamingService;
-    let server = grpc_quic::server::QuicServer::builder()
-        .tls(tls_config)
-        .build();
+    let server = grpc_quic::server::QuicServer::builder().tls(tls).build();
 
     println!("Starting gRPC-over-QUIC server on {}", addr);
-    println!("Writing self-signed cert.der to current directory for client authentication...");
 
     server
         .serve(addr, StreamingServiceServer::new(service))

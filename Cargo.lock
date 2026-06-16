@@ -662,8 +662,6 @@ dependencies = [
  "futures",
  "grpc-quic",
  "prost",
- "rcgen",
- "rustls",
  "tokio",
  "tokio-stream",
  "tonic",

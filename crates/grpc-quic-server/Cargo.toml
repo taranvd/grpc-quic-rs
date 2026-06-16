@@ -12,7 +12,7 @@ categories.workspace  = true
 
 [dependencies]
 grpc-quic-core      = { path = "../grpc-quic-core", version = "0.1.0" }
-grpc-quic-transport = { path = "../grpc-quic-transport", version = "0.1.0" }
+grpc-quic-transport = { path = "../grpc-quic-transport", version = "0.1.0", features = ["dev-certs"] }
 grpc-quic-metrics   = { path = "../grpc-quic-metrics", version = "0.1.0" }
 
 quinn       = { workspace = true }
