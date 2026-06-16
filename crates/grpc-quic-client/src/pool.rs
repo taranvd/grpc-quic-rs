@@ -36,15 +36,23 @@ impl ConnectionPool {
         F: FnOnce(SocketAddr) -> Fut,
         Fut: std::future::Future<Output = Result<QuicConnection, ClientError>>,
     {
-        let mut map = self.inner.lock().await;
-        if let Some(entry) = map.get(&addr) {
-            if !entry.quic.is_closed() {
-                debug!(remote = %addr, "reusing existing QUIC connection + h3 session");
-                return Ok(entry.clone());
+        let needs_connect = {
+            let mut map = self.inner.lock().await;
+            if let Some(entry) = map.get(&addr) {
+                if !entry.quic.is_closed() {
+                    debug!(remote = %addr, "reusing existing QUIC connection + h3 session");
+                    return Ok(entry.clone());
+                }
+                debug!(remote = %addr, "cached connection is closed, removing");
+                map.remove(&addr);
             }
-            debug!(remote = %addr, "cached connection is closed, removing");
-            map.remove(&addr);
+            true
+        };
+
+        if !needs_connect {
+            unreachable!()
         }
+
         let quic = connect_fn(addr).await?;
         let h3 = H3ClientSession::new(quic.get_ref().clone())
             .await
@@ -55,6 +63,8 @@ impl ConnectionPool {
             quic: quic.clone(),
             h3,
         };
+
+        let mut map = self.inner.lock().await;
         map.insert(addr, entry.clone());
         Ok(entry)
     }

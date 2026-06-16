@@ -37,8 +37,8 @@ impl Body for ServerRecvBody {
 
         if !this.data_done {
             match this.stream.poll_recv_data(cx) {
-                Poll::Ready(Ok(Some(buf))) => {
-                    let data = Bytes::copy_from_slice(buf.chunk());
+                Poll::Ready(Ok(Some(mut buf))) => {
+                    let data = buf.copy_to_bytes(buf.remaining());
                     return Poll::Ready(Some(Ok(Frame::data(data))));
                 }
                 Poll::Ready(Ok(None)) => {
@@ -52,13 +52,21 @@ impl Body for ServerRecvBody {
         }
 
         if !this.trailers_done {
-            this.trailers_done = true;
-            return match this.stream.poll_recv_trailers(cx) {
-                Poll::Ready(Ok(Some(trailers))) => Poll::Ready(Some(Ok(Frame::trailers(trailers)))),
-                Poll::Ready(Ok(None)) => Poll::Ready(None),
-                Poll::Ready(Err(e)) => Poll::Ready(Some(Err(CoreError::from(e)))),
-                Poll::Pending => Poll::Pending,
-            };
+            match this.stream.poll_recv_trailers(cx) {
+                Poll::Ready(Ok(Some(trailers))) => {
+                    this.trailers_done = true;
+                    return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
+                }
+                Poll::Ready(Ok(None)) => {
+                    this.trailers_done = true;
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Err(e)) => {
+                    this.trailers_done = true;
+                    return Poll::Ready(Some(Err(CoreError::from(e))));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
         }
 
         Poll::Ready(None)
@@ -96,8 +104,8 @@ impl Body for ClientRecvBody {
 
         if !this.data_done {
             match this.stream.poll_recv_data(cx) {
-                Poll::Ready(Ok(Some(buf))) => {
-                    let data = Bytes::copy_from_slice(buf.chunk());
+                Poll::Ready(Ok(Some(mut buf))) => {
+                    let data = buf.copy_to_bytes(buf.remaining());
                     return Poll::Ready(Some(Ok(Frame::data(data))));
                 }
                 Poll::Ready(Ok(None)) => {
@@ -111,13 +119,21 @@ impl Body for ClientRecvBody {
         }
 
         if !this.trailers_done {
-            this.trailers_done = true;
-            return match this.stream.poll_recv_trailers(cx) {
-                Poll::Ready(Ok(Some(trailers))) => Poll::Ready(Some(Ok(Frame::trailers(trailers)))),
-                Poll::Ready(Ok(None)) => Poll::Ready(None),
-                Poll::Ready(Err(e)) => Poll::Ready(Some(Err(CoreError::from(e)))),
-                Poll::Pending => Poll::Pending,
-            };
+            match this.stream.poll_recv_trailers(cx) {
+                Poll::Ready(Ok(Some(trailers))) => {
+                    this.trailers_done = true;
+                    return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
+                }
+                Poll::Ready(Ok(None)) => {
+                    this.trailers_done = true;
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Err(e)) => {
+                    this.trailers_done = true;
+                    return Poll::Ready(Some(Err(CoreError::from(e))));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
         }
 
         Poll::Ready(None)

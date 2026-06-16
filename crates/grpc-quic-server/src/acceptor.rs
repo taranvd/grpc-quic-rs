@@ -39,8 +39,11 @@ where
         Ok(r) => r,
         Err(e) => {
             error!("service call failed: {:?}", e.into());
-            let resp = http::Response::builder().status(500).body(()).unwrap();
-            let _ = send.send_response(resp).await;
+            if let Ok(resp) = http::Response::builder().status(500).body(()) {
+                if let Err(e) = send.send_response(resp).await {
+                    error!("failed to send 500 response: {e}");
+                }
+            }
             return Ok(());
         }
     };
@@ -91,6 +94,8 @@ where
         }
     }
 
-    let _ = send.finish().await;
+    if let Err(e) = send.finish().await {
+        error!("failed to finish stream: {e}");
+    }
     Ok(())
 }

@@ -99,7 +99,7 @@ impl QuicEndpoint {
         let conn = self
             .inner
             .connect(addr, server_name)
-            .map_err(|e| TransportError::Tls(e.to_string()))?
+            .map_err(|e| TransportError::Stream(e.to_string()))?
             .await
             .map_err(TransportError::Connection)?;
         Ok(QuicConnection::new(conn))

@@ -74,13 +74,13 @@ impl QuicChannelBuilder {
         } else if let Some(ref resolver) = self.resolver {
             let mut addrs = resolver.resolve(&addr_str);
             if addrs.is_empty() {
-                return Err(ClientError::InvalidResponse(format!(
+                return Err(ClientError::RequestBuild(format!(
                     "resolver returned no addresses for: {addr_str}"
                 )));
             }
             addrs.remove(0)
         } else {
-            return Err(ClientError::InvalidResponse(format!(
+            return Err(ClientError::RequestBuild(format!(
                 "invalid address and no resolver configured: {addr_str}"
             )));
         };
@@ -203,7 +203,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     .header("content-type", "application/grpc")
                     .header("te", "trailers")
                     .body(())
-                    .map_err(|e| ClientError::InvalidResponse(e.to_string()))?;
+                    .map_err(|e| ClientError::RequestBuild(e.to_string()))?;
 
                 let mut stream = match entry.h3.send_request(h3_req).await {
                     Ok(s) => {
