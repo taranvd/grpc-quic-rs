@@ -172,6 +172,8 @@ impl QuicServer {
         let stream_limit = (self.max_concurrent_streams as usize).max(64) * 4;
         let stream_semaphore = Arc::new(Semaphore::new(stream_limit));
 
+        let mut join_set = tokio::task::JoinSet::new();
+
         loop {
             tokio::select! {
                 _ = &mut signal => {
@@ -197,12 +199,19 @@ impl QuicServer {
 
                     let service = service.clone();
                     let sem = stream_semaphore.clone();
-                    tokio::spawn(async move {
+                    join_set.spawn(async move {
                         if let Err(e) = handle_connection(conn, service, sem).await {
                             error!(error = %e, "connection handling error");
                         }
                     });
                 }
+            }
+        }
+
+        // Wait for all in-flight connections to complete
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                error!("connection task failed: {e}");
             }
         }
 

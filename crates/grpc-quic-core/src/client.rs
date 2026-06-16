@@ -21,7 +21,10 @@ pub async fn build_client_conn(conn: quinn::Connection) -> Result<H3SendRequest,
     // The driver must be polled in the background to process incoming frames
     // (QPACK, SETTINGS, GOAWAY, server pushes, etc.).
     tokio::spawn(async move {
-        future::poll_fn(|cx| h3_conn.poll_close(cx)).await;
+        let err = future::poll_fn(|cx| h3_conn.poll_close(cx)).await;
+        if !err.is_h3_no_error() {
+            tracing::error!(error = %err, "h3 client driver error");
+        }
     });
 
     Ok(send_req)

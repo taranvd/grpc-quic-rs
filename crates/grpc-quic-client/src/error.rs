@@ -30,4 +30,8 @@ pub enum ClientError {
     /// The response from the server was malformed.
     #[error("invalid response: {0}")]
     InvalidResponse(String),
+
+    /// Failed to build the HTTP/3 request.
+    #[error("request build error: {0}")]
+    RequestBuild(String),
 }
