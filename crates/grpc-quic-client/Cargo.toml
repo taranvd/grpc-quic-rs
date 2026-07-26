@@ -2,6 +2,7 @@
 name        = "grpc-quic-client"
 description = "gRPC client over QUIC transport — QuicChannel tower::Service adapter"
 version.workspace     = true
+readme.workspace      = true
 edition.workspace     = true
 rust-version.workspace = true
 authors.workspace     = true
@@ -11,10 +12,10 @@ keywords.workspace    = true
 categories.workspace  = true
 
 [dependencies]
-grpc-quic-core       = { path = "../grpc-quic-core", version = "0.1.0" }
-grpc-quic-transport  = { path = "../grpc-quic-transport", version = "0.1.0" }
-grpc-quic-metrics    = { path = "../grpc-quic-metrics", version = "0.1.0" }
-grpc-quic-discovery  = { path = "../grpc-quic-discovery", version = "0.1.0" }
+grpc-quic-core       = { path = "../grpc-quic-core", version = "0.1.1" }
+grpc-quic-transport  = { path = "../grpc-quic-transport", version = "0.1.1" }
+grpc-quic-metrics    = { path = "../grpc-quic-metrics", version = "0.1.1" }
+grpc-quic-discovery  = { path = "../grpc-quic-discovery", version = "0.1.1" }
 
 quinn       = { workspace = true }
 tokio       = { workspace = true }

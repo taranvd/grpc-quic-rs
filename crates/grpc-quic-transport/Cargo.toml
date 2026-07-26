@@ -2,6 +2,7 @@
 name        = "grpc-quic-transport"
 description = "QUIC transport primitives for grpc-quic: endpoints, connections, and TLS"
 version.workspace     = true
+readme.workspace      = true
 edition.workspace     = true
 rust-version.workspace = true
 authors.workspace     = true
