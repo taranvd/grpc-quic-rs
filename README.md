@@ -1,6 +1,10 @@
+<div align="center">
+  <img src="assets/logo.png" alt="grpc-quic-rs logo" width="600" />
+</div>
+
 # grpc-quic-rs
 
-> **gRPC over HTTP/3 for tonic** — enables standards-compliant gRPC transport over HTTP/3 (h3) and QUIC while preserving full gRPC semantics and API compatibility..
+> **gRPC over HTTP/3 for tonic** — enables standards-compliant gRPC transport over HTTP/3 (h3) and QUIC while preserving full gRPC semantics and API compatibility.
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -82,7 +86,7 @@ flowchart TB
 
 ---
 
-## Quick start
+## Getting Started
 
 > **Cargo.toml:**
 > ```toml
@@ -145,21 +149,6 @@ All four gRPC streaming modes are supported via HTTP/3 data frames + trailers:
 | Client Streaming | HTTP/3 request stream, single response |
 | Server Streaming | Single request, HTTP/3 response stream |
 | Bidirectional | Full-duplex HTTP/3 stream |
-
----
-
-## Roadmap
-
-- [x] **Phase 1** — Workspace scaffold, CI, justfile
-- [x] **Phase 2** — QUIC transport: endpoints, connections, TLS
-- [x] **Phase 3** — Server: QUIC acceptor → tonic Router dispatch
-- [x] **Phase 4** — Client: QuicChannel + ConnectionPool + RetryPolicy
-- [x] **Phase 5** — All streaming modes + examples
-- [x] **Phase 6** — Prometheus metrics + tracing spans
-- [x] **Phase 7** — Service discovery (Resolver trait + StaticResolver)
-- [x] **Phase 8** — mdbook documentation + rustdoc
-- [x] **Phase 9** — Criterion benchmarks (QUIC vs TCP/tonic baseline)
-- [x] **Phase 10** — Rewrite to HTTP/3 (h3 + h3-quinn), remove custom wire format
 
 ---
 
