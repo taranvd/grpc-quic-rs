@@ -19,6 +19,8 @@ rust-version = "1.75"
 authors = ["grpc-quic contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/taranvd/grpc-quic-rs"
+description = "gRPC over HTTP/3 for tonic — enables standards-compliant gRPC transport over HTTP/3 and QUIC"
+readme = "README.md"
 keywords = ["grpc", "quic", "tonic", "transport", "networking"]
 categories = ["network-programming", "asynchronous"]
 
