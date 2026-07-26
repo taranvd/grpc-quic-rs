@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo.png" alt="grpc-quic-rs logo" width="300" />
+  <img src="assets/logo.png" alt="grpc-quic-rs logo" width="600" />
 </div>
 
 # grpc-quic-rs
