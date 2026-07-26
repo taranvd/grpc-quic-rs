@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "grpc-quic-client",
  "grpc-quic-discovery",
@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-benches"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "criterion",
@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "futures",
@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "futures",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-discovery"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror 1.0.69",
  "tracing",
@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-metrics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "prometheus",
  "thiserror 1.0.69",
@@ -681,7 +681,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "futures",
@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "grpc-quic-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "futures",

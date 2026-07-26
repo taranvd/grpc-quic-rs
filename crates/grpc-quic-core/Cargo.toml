@@ -2,6 +2,7 @@
 name        = "grpc-quic-core"
 description = "HTTP/3 + gRPC core: h3 transport, body adaptation, stream management"
 version.workspace     = true
+readme.workspace      = true
 edition.workspace     = true
 rust-version.workspace = true
 authors.workspace     = true

@@ -2,6 +2,7 @@
 name        = "grpc-quic-metrics"
 description = "Prometheus metrics and tracing spans for grpc-quic"
 version.workspace     = true
+readme.workspace      = true
 edition.workspace     = true
 rust-version.workspace = true
 authors.workspace     = true
