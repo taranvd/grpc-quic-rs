@@ -576,11 +576,20 @@ dependencies = [
 name = "grpc-quic"
 version = "0.1.1"
 dependencies = [
+ "futures",
  "grpc-quic-client",
  "grpc-quic-discovery",
  "grpc-quic-metrics",
  "grpc-quic-server",
  "grpc-quic-transport",
+ "h2",
+ "prost",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tower 0.4.13",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

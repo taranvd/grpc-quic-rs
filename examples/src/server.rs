@@ -4,9 +4,7 @@ use std::pin::Pin;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
-pub mod pb {
-    tonic::include_proto!("streaming");
-}
+use grpc_quic_examples::pb;
 
 use pb::streaming_service_server::{StreamingService, StreamingServiceServer};
 use pb::{HelloRequest, HelloResponse};

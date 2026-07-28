@@ -11,10 +11,21 @@ use crate::acceptor::handle_request;
 use crate::error::ServerError;
 
 /// Builder for [`QuicServer`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct QuicServerBuilder {
     tls: Option<TlsConfig>,
     max_concurrent_streams: Option<u32>,
+    graceful_timeout: std::time::Duration,
+}
+
+impl Default for QuicServerBuilder {
+    fn default() -> Self {
+        Self {
+            tls: None,
+            max_concurrent_streams: None,
+            graceful_timeout: std::time::Duration::from_secs(30),
+        }
+    }
 }
 
 impl QuicServerBuilder {
@@ -29,6 +40,12 @@ impl QuicServerBuilder {
         self.max_concurrent_streams = Some(limit);
         self
     }
+    
+    /// Set the timeout for graceful shutdown to drain existing streams (default 30s).
+    pub fn graceful_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.graceful_timeout = timeout;
+        self
+    }
 
     /// Return a configured [`QuicServer`]. The actual socket bind happens in
     /// [`serve`](QuicServer::serve) or [`serve_with_incoming`](QuicServer::serve_with_incoming).
@@ -36,6 +53,7 @@ impl QuicServerBuilder {
         QuicServer {
             tls: self.tls,
             max_concurrent_streams: self.max_concurrent_streams.unwrap_or(256),
+            graceful_timeout: self.graceful_timeout,
         }
     }
 }
@@ -62,6 +80,7 @@ impl QuicServerBuilder {
 pub struct QuicServer {
     pub(crate) tls: Option<TlsConfig>,
     pub(crate) max_concurrent_streams: u32,
+    pub(crate) graceful_timeout: std::time::Duration,
 }
 
 impl QuicServer {
@@ -173,12 +192,14 @@ impl QuicServer {
         let stream_semaphore = Arc::new(Semaphore::new(stream_limit));
 
         let mut join_set = tokio::task::JoinSet::new();
+        let (cancel_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
         loop {
             tokio::select! {
                 _ = &mut signal => {
-                    info!("shutdown signal received, closing server");
-                    endpoint.close(0, b"shutdown");
+                    info!("shutdown signal received, rejecting new connections");
+                    endpoint.reject_new_connections();
+                    let _ = cancel_tx.send(());
                     break;
                 }
                 conn_res = endpoint.accept() => {
@@ -199,8 +220,9 @@ impl QuicServer {
 
                     let service = service.clone();
                     let sem = stream_semaphore.clone();
+                    let cancel_rx = cancel_tx.subscribe();
                     join_set.spawn(async move {
-                        if let Err(e) = handle_connection(conn, service, sem).await {
+                        if let Err(e) = handle_connection(conn, service, sem, cancel_rx).await {
                             error!(error = %e, "connection handling error");
                         }
                     });
@@ -208,22 +230,30 @@ impl QuicServer {
             }
         }
 
-        // Wait for all in-flight connections to complete
-        while let Some(result) = join_set.join_next().await {
-            if let Err(e) = result {
-                error!("connection task failed: {e}");
+        // Wait for all in-flight connections to complete with a 30s timeout
+        let wait_for_connections = async {
+            while let Some(result) = join_set.join_next().await {
+                if let Err(e) = result {
+                    error!("connection task failed: {e}");
+                }
             }
+        };
+
+        if let Err(_) = tokio::time::timeout(self.graceful_timeout, wait_for_connections).await {
+            error!("graceful shutdown timed out, closing endpoint forcefully");
+            endpoint.close(0, b"shutdown timeout");
         }
 
         Ok(())
     }
 }
 
-#[tracing::instrument(skip(conn, service, semaphore))]
+#[tracing::instrument(skip(conn, service, semaphore, cancel_rx))]
 async fn handle_connection<S>(
     conn: QuicConnection,
     service: S,
     semaphore: Arc<Semaphore>,
+    mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ServerError>
 where
     S: tower::Service<
@@ -246,39 +276,61 @@ where
         }
     };
 
+    let mut request_join_set = tokio::task::JoinSet::new();
+
     loop {
-        let resolver = match h3_conn.accept().await {
-            Ok(Some(r)) => r,
-            Ok(None) => break,
-            Err(e) => {
-                error!("h3 accept error: {e}");
+        tokio::select! {
+            _ = cancel_rx.recv() => {
+                let _ = h3_conn.shutdown(0).await;
+                // As requested: do not poll accept() anymore, but we must
+                // keep h3_conn alive so that active streams aren't abruptly destroyed.
                 break;
             }
-        };
+            accept_res = h3_conn.accept() => {
+                let resolver = match accept_res {
+                    Ok(Some(r)) => r,
+                    Ok(None) => break,
+                    Err(e) => {
+                        error!("h3 accept error: {e}");
+                        break;
+                    }
+                };
 
-        let (req, stream) = match resolver.resolve_request().await {
-            Ok(pair) => pair,
-            Err(e) => {
-                error!("resolve request error: {e}");
-                continue;
-            }
-        };
+                let (req, stream) = match resolver.resolve_request().await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        error!("resolve request error: {e}");
+                        continue;
+                    }
+                };
 
-        let permit = match semaphore.clone().try_acquire_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                error!("server overloaded — dropping request");
-                continue;
-            }
-        };
+                let permit = match semaphore.clone().try_acquire_owned() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        error!("server overloaded — dropping request");
+                        continue;
+                    }
+                };
 
-        let service = service.clone();
-        tokio::spawn(async move {
-            let _permit = permit;
-            if let Err(e) = handle_request(req, stream, service).await {
-                error!(error = %e, "request handling error");
+                let service = service.clone();
+                request_join_set.spawn(async move {
+                    let _permit = permit;
+                    if let Err(e) = handle_request(req, stream, service).await {
+                        error!(error = %e, "request handling error");
+                    }
+                });
             }
-        });
+        }
     }
+
+    // Wait for all active requests on this connection to finish
+    while let Some(res) = request_join_set.join_next().await {
+        if let Err(e) = res {
+            error!("request task failed: {e}");
+        }
+    }
+
+    drop(h3_conn);
+
     Ok(())
 }

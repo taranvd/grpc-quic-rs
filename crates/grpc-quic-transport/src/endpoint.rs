@@ -115,4 +115,9 @@ impl QuicEndpoint {
         self.inner
             .close(quinn::VarInt::from_u32(error_code), reason);
     }
+
+    /// Reject new incoming connections.
+    pub fn reject_new_connections(&self) {
+        self.inner.set_server_config(None);
+    }
 }
