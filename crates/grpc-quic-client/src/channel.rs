@@ -95,8 +95,6 @@ impl QuicChannelBuilder {
     }
 }
 
-
-
 #[derive(Clone, Debug)]
 pub struct QuicChannel {
     remote: SocketAddr,
@@ -140,7 +138,7 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                     timeout_duration = parse_grpc_timeout(timeout_str);
                 }
             }
-            
+
             let deadline = timeout_duration.map(|d| tokio::time::Instant::now() + d);
 
             let rpc_future = async {
@@ -178,7 +176,8 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                             let tls_config = tls_config.clone();
                             let server_name = server_name.clone();
                             async move {
-                                let endpoint = grpc_quic_transport::QuicEndpoint::client(tls_config)?;
+                                let endpoint =
+                                    grpc_quic_transport::QuicEndpoint::client(tls_config)?;
                                 let conn = endpoint.connect(addr, &server_name).await?;
                                 Ok(conn)
                             }
@@ -202,8 +201,12 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                         .map_err(|e| ClientError::RequestBuild(e.to_string()))?;
 
                     *h3_req.headers_mut() = original_headers.clone();
-                    h3_req.headers_mut().insert("content-type", "application/grpc".parse().unwrap());
-                    h3_req.headers_mut().insert("te", "trailers".parse().unwrap());
+                    h3_req
+                        .headers_mut()
+                        .insert("content-type", "application/grpc".parse().unwrap());
+                    h3_req
+                        .headers_mut()
+                        .insert("te", "trailers".parse().unwrap());
 
                     let stream = match entry.h3.send_request(h3_req).await {
                         Ok(s) => {
@@ -220,17 +223,22 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
 
                     let (mut send, mut recv) = stream.split();
                     let (err_tx, err_rx) = tokio::sync::oneshot::channel();
-                    
+
                     let forward_task = tokio::spawn(async move {
                         tokio::pin!(body);
                         loop {
-                            let frame = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await;
+                            let frame =
+                                futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await;
                             match frame {
                                 Some(Ok(frame)) => match frame.into_data() {
                                     Ok(data) => {
                                         let len = data.len() as u64;
                                         if let Err(e) = send.send_data(data).await {
-                                            let _ = err_tx.send(grpc_quic_core::error::CoreError::H3Stream(e.to_string()));
+                                            let _ = err_tx.send(
+                                                grpc_quic_core::error::CoreError::H3Stream(
+                                                    e.to_string(),
+                                                ),
+                                            );
                                             break;
                                         }
                                         record_bytes_sent("client", len);
@@ -238,19 +246,29 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                                     Err(frame) => {
                                         if let Ok(trailers) = frame.into_trailers() {
                                             if let Err(e) = send.send_trailers(trailers).await {
-                                                let _ = err_tx.send(grpc_quic_core::error::CoreError::H3Stream(e.to_string()));
+                                                let _ = err_tx.send(
+                                                    grpc_quic_core::error::CoreError::H3Stream(
+                                                        e.to_string(),
+                                                    ),
+                                                );
                                             }
                                             return; // trailers close the stream
                                         }
                                     }
                                 },
                                 Some(Err(e)) => {
-                                    let _ = err_tx.send(grpc_quic_core::error::CoreError::H3Stream(e.to_string()));
+                                    let _ = err_tx.send(
+                                        grpc_quic_core::error::CoreError::H3Stream(e.to_string()),
+                                    );
                                     break;
                                 }
                                 None => {
                                     if let Err(e) = send.finish().await {
-                                        let _ = err_tx.send(grpc_quic_core::error::CoreError::H3Stream(e.to_string()));
+                                        let _ = err_tx.send(
+                                            grpc_quic_core::error::CoreError::H3Stream(
+                                                e.to_string(),
+                                            ),
+                                        );
                                     }
                                     break;
                                 }
@@ -262,11 +280,18 @@ impl Service<http::Request<tonic::body::BoxBody>> for QuicChannel {
                         Ok(r) => r,
                         Err(e) => {
                             forward_task.abort();
-                            return Err(ClientError::StreamIo(std::io::Error::other(e.to_string())));
+                            return Err(ClientError::StreamIo(std::io::Error::other(
+                                e.to_string(),
+                            )));
                         }
                     };
 
-                    let body = grpc_quic_core::body::ClientRecvBody::new(recv, Some(err_rx), Some(forward_task.abort_handle()), deadline);
+                    let body = grpc_quic_core::body::ClientRecvBody::new(
+                        recv,
+                        Some(err_rx),
+                        Some(forward_task.abort_handle()),
+                        deadline,
+                    );
 
                     let mut response = http::Response::new(body);
                     *response.status_mut() = resp.status();

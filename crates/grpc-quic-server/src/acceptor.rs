@@ -36,7 +36,7 @@ where
 
     use tower::ServiceExt;
     let mut service = service;
-    
+
     let response = match service.ready().await {
         Ok(s) => match s.call(request).await {
             Ok(r) => r,

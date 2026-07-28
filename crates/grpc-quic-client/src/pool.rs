@@ -1,5 +1,5 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tracing::debug;
 
 use grpc_quic_core::client::H3ClientSession;
@@ -61,28 +61,30 @@ impl ConnectionPool {
                         let (tx, rx) = oneshot::channel();
                         waiters.push(tx);
                         drop(map);
-                        return rx.await.unwrap_or_else(|_| Err(ClientError::StreamIo(std::io::Error::other("connection task cancelled"))));
+                        return rx.await.unwrap_or_else(|_| {
+                            Err(ClientError::StreamIo(std::io::Error::other(
+                                "connection task cancelled",
+                            )))
+                        });
                     }
                 }
             }
-            
+
             let (tx, rx) = oneshot::channel();
             map.insert(addr, Slot::Connecting(vec![tx]));
-            
+
             let pool_inner = self.inner.clone();
             tokio::spawn(async move {
                 let quic_res = connect_fn(addr).await;
                 let res = match quic_res {
-                    Ok(quic) => {
-                        match H3ClientSession::new(quic.get_ref().clone()).await {
-                            Ok(h3) => {
-                                record_connection("client");
-                                debug!(remote = %addr, "established new QUIC connection + h3 session");
-                                Ok(PoolEntry { quic, h3 })
-                            }
-                            Err(e) => Err(ClientError::StreamIo(std::io::Error::other(e.to_string()))),
+                    Ok(quic) => match H3ClientSession::new(quic.get_ref().clone()).await {
+                        Ok(h3) => {
+                            record_connection("client");
+                            debug!(remote = %addr, "established new QUIC connection + h3 session");
+                            Ok(PoolEntry { quic, h3 })
                         }
-                    }
+                        Err(e) => Err(ClientError::StreamIo(std::io::Error::other(e.to_string()))),
+                    },
                     Err(e) => Err(e),
                 };
 
@@ -94,7 +96,9 @@ impl ConnectionPool {
                     for tx in waiters {
                         let send_res = match &res {
                             Ok(entry) => Ok(entry.clone()),
-                            Err(e) => Err(ClientError::StreamIo(std::io::Error::other(e.to_string()))),
+                            Err(e) => {
+                                Err(ClientError::StreamIo(std::io::Error::other(e.to_string())))
+                            }
                         };
                         let _ = tx.send(send_res);
                     }
@@ -103,7 +107,11 @@ impl ConnectionPool {
             rx
         };
 
-        rx.await.unwrap_or_else(|_| Err(ClientError::StreamIo(std::io::Error::other("connection task cancelled"))))
+        rx.await.unwrap_or_else(|_| {
+            Err(ClientError::StreamIo(std::io::Error::other(
+                "connection task cancelled",
+            )))
+        })
     }
 
     pub async fn invalidate(&self, addr: &SocketAddr) {

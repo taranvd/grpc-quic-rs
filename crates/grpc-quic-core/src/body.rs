@@ -141,7 +141,10 @@ impl Body for ClientRecvBody {
                     *this.trailers_done = true;
                     let mut trailers = http::HeaderMap::new();
                     trailers.insert("grpc-status", http::HeaderValue::from_static("4"));
-                    trailers.insert("grpc-message", http::HeaderValue::from_static("deadline exceeded"));
+                    trailers.insert(
+                        "grpc-message",
+                        http::HeaderValue::from_static("deadline exceeded"),
+                    );
                     return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
                 } else {
                     return Poll::Ready(None);

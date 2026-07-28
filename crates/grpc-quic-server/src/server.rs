@@ -40,7 +40,7 @@ impl QuicServerBuilder {
         self.max_concurrent_streams = Some(limit);
         self
     }
-    
+
     /// Set the timeout for graceful shutdown to drain existing streams (default 30s).
     pub fn graceful_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.graceful_timeout = timeout;
@@ -239,7 +239,7 @@ impl QuicServer {
             }
         };
 
-        if let Err(_) = tokio::time::timeout(self.graceful_timeout, wait_for_connections).await {
+        if tokio::time::timeout(self.graceful_timeout, wait_for_connections).await.is_err() {
             error!("graceful shutdown timed out, closing endpoint forcefully");
             endpoint.close(0, b"shutdown timeout");
         }
