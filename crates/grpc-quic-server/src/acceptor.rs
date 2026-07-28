@@ -34,11 +34,24 @@ where
     *request.uri_mut() = req.uri().clone();
     *request.headers_mut() = req.headers().clone();
 
+    use tower::ServiceExt;
     let mut service = service;
-    let response = match service.call(request).await {
-        Ok(r) => r,
+
+    let response = match service.ready().await {
+        Ok(s) => match s.call(request).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!("service call failed: {:?}", e.into());
+                if let Ok(resp) = http::Response::builder().status(500).body(()) {
+                    if let Err(e) = send.send_response(resp).await {
+                        error!("failed to send 500 response: {e}");
+                    }
+                }
+                return Ok(());
+            }
+        },
         Err(e) => {
-            error!("service call failed: {:?}", e.into());
+            error!("service not ready: {:?}", e.into());
             if let Ok(resp) = http::Response::builder().status(500).body(()) {
                 if let Err(e) = send.send_response(resp).await {
                     error!("failed to send 500 response: {e}");

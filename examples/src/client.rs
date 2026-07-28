@@ -2,9 +2,7 @@ use grpc_quic::client::QuicChannel;
 use grpc_quic::transport::TlsConfig;
 use tokio_stream::StreamExt;
 
-pub mod pb {
-    tonic::include_proto!("streaming");
-}
+use grpc_quic_examples::pb;
 
 use pb::streaming_service_client::StreamingServiceClient;
 use pb::HelloRequest;

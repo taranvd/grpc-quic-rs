@@ -1,9 +1,7 @@
 use std::fmt;
-use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::future;
-use tokio::sync::Mutex;
 
 use crate::error::CoreError;
 
@@ -32,7 +30,7 @@ pub async fn build_client_conn(conn: quinn::Connection) -> Result<H3SendRequest,
 
 #[derive(Clone)]
 pub struct H3ClientSession {
-    send_req: Arc<Mutex<H3SendRequest>>,
+    send_req: H3SendRequest,
 }
 
 impl fmt::Debug for H3ClientSession {
@@ -44,17 +42,15 @@ impl fmt::Debug for H3ClientSession {
 impl H3ClientSession {
     pub async fn new(conn: quinn::Connection) -> Result<Self, CoreError> {
         let send_req = build_client_conn(conn).await?;
-        Ok(Self {
-            send_req: Arc::new(Mutex::new(send_req)),
-        })
+        Ok(Self { send_req })
     }
 
     pub async fn send_request(
         &self,
         req: http::Request<()>,
     ) -> Result<h3::client::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>, CoreError> {
-        let mut guard = self.send_req.lock().await;
-        let stream = guard.send_request(req).await.map_err(CoreError::from)?;
+        let mut sender = self.send_req.clone();
+        let stream = sender.send_request(req).await.map_err(CoreError::from)?;
         Ok(stream)
     }
 }

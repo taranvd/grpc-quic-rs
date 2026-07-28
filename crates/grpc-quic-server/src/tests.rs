@@ -124,16 +124,18 @@ async fn test_server_serve_and_dispatch() {
     assert_eq!(resp.status(), 200);
 
     let (_send_resp, recv_resp) = stream.split();
-    let mut resp_body = ClientRecvBody::new(recv_resp);
+    let resp_body = ClientRecvBody::new(recv_resp, None, None, None);
 
-    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+    tokio::pin!(resp_body);
+
+    let frame = futures::future::poll_fn(|cx| resp_body.as_mut().poll_frame(cx))
         .await
         .unwrap()
         .unwrap();
     let data = frame.into_data().unwrap();
     assert_eq!(&data[..], b"response bytes");
 
-    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+    let frame = futures::future::poll_fn(|cx| resp_body.as_mut().poll_frame(cx))
         .await
         .unwrap()
         .unwrap();
@@ -202,16 +204,18 @@ async fn test_channel_end_to_end() {
 
     let response = channel.call(request).await.unwrap();
 
-    let mut resp_body = response.into_body();
+    let resp_body = response.into_body();
 
-    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+    tokio::pin!(resp_body);
+
+    let frame = futures::future::poll_fn(|cx| resp_body.as_mut().poll_frame(cx))
         .await
         .unwrap()
         .unwrap();
     let data = frame.into_data().unwrap();
     assert_eq!(&data[..], b"channel response");
 
-    let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx))
+    let frame = futures::future::poll_fn(|cx| resp_body.as_mut().poll_frame(cx))
         .await
         .unwrap()
         .unwrap();
@@ -288,10 +292,11 @@ async fn test_large_payload() {
 
     let response = channel.call(request).await.unwrap();
 
-    let mut resp_body = response.into_body();
+    let resp_body = response.into_body();
     let mut result = Vec::new();
+    tokio::pin!(resp_body);
     loop {
-        let frame = futures::future::poll_fn(|cx| Pin::new(&mut resp_body).poll_frame(cx)).await;
+        let frame = futures::future::poll_fn(|cx| resp_body.as_mut().poll_frame(cx)).await;
         match frame {
             Some(Ok(frame)) => {
                 if let Ok(data) = frame.into_data() {

@@ -12,11 +12,11 @@ keywords.workspace    = true
 categories.workspace  = true
 
 [dependencies]
-grpc-quic-transport = { path = "../grpc-quic-transport", version = "0.1.1" }
-grpc-quic-client    = { path = "../grpc-quic-client", version = "0.1.1" }
-grpc-quic-server    = { path = "../grpc-quic-server", version = "0.1.1" }
-grpc-quic-metrics   = { path = "../grpc-quic-metrics", version = "0.1.1", optional = true }
-grpc-quic-discovery = { path = "../grpc-quic-discovery", version = "0.1.1", optional = true }
+grpc-quic-transport = { path = "../grpc-quic-transport", version = "0.2.0" }
+grpc-quic-client    = { path = "../grpc-quic-client", version = "0.2.0" }
+grpc-quic-server    = { path = "../grpc-quic-server", version = "0.2.0" }
+grpc-quic-metrics   = { path = "../grpc-quic-metrics", version = "0.2.0", optional = true }
+grpc-quic-discovery = { path = "../grpc-quic-discovery", version = "0.2.0", optional = true }
 
 [features]
 default    = []
@@ -24,3 +24,14 @@ metrics    = ["dep:grpc-quic-metrics"]
 discovery  = ["dep:grpc-quic-discovery"]
 dev-certs  = ["grpc-quic-transport/dev-certs"]
 full       = ["metrics", "discovery", "dev-certs"]
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+futures = "0.3"
+tower = { version = "0.4", features = ["limit"] }
+h2 = "0.4"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio-stream = { version = "0.1", features = ["net"] }

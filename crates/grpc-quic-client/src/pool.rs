@@ -1,6 +1,5 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 use tracing::debug;
 
 use grpc_quic_core::client::H3ClientSession;
@@ -15,9 +14,20 @@ pub struct PoolEntry {
     pub h3: H3ClientSession,
 }
 
-#[derive(Clone, Debug)]
+enum Slot {
+    Connecting(Vec<oneshot::Sender<Result<PoolEntry, ClientError>>>),
+    Ready(PoolEntry),
+}
+
+#[derive(Clone)]
 pub struct ConnectionPool {
-    inner: Arc<Mutex<HashMap<SocketAddr, PoolEntry>>>,
+    inner: Arc<Mutex<HashMap<SocketAddr, Slot>>>,
+}
+
+impl std::fmt::Debug for ConnectionPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionPool").finish()
+    }
 }
 
 impl ConnectionPool {
@@ -33,45 +43,84 @@ impl ConnectionPool {
         connect_fn: F,
     ) -> Result<PoolEntry, ClientError>
     where
-        F: FnOnce(SocketAddr) -> Fut,
-        Fut: std::future::Future<Output = Result<QuicConnection, ClientError>>,
+        F: FnOnce(SocketAddr) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<QuicConnection, ClientError>> + Send + 'static,
     {
-        let needs_connect = {
+        let rx = {
             let mut map = self.inner.lock().await;
-            if let Some(entry) = map.get(&addr) {
-                if !entry.quic.is_closed() {
-                    debug!(remote = %addr, "reusing existing QUIC connection + h3 session");
-                    return Ok(entry.clone());
+            if let Some(slot) = map.get_mut(&addr) {
+                match slot {
+                    Slot::Ready(entry) => {
+                        if !entry.quic.is_closed() {
+                            debug!(remote = %addr, "reusing existing QUIC connection + h3 session");
+                            return Ok(entry.clone());
+                        }
+                        debug!(remote = %addr, "cached connection is closed, will reconnect");
+                    }
+                    Slot::Connecting(waiters) => {
+                        let (tx, rx) = oneshot::channel();
+                        waiters.push(tx);
+                        drop(map);
+                        return rx.await.unwrap_or_else(|_| {
+                            Err(ClientError::StreamIo(std::io::Error::other(
+                                "connection task cancelled",
+                            )))
+                        });
+                    }
                 }
-                debug!(remote = %addr, "cached connection is closed, removing");
-                map.remove(&addr);
             }
-            true
+
+            let (tx, rx) = oneshot::channel();
+            map.insert(addr, Slot::Connecting(vec![tx]));
+
+            let pool_inner = self.inner.clone();
+            tokio::spawn(async move {
+                let quic_res = connect_fn(addr).await;
+                let res = match quic_res {
+                    Ok(quic) => match H3ClientSession::new(quic.get_ref().clone()).await {
+                        Ok(h3) => {
+                            record_connection("client");
+                            debug!(remote = %addr, "established new QUIC connection + h3 session");
+                            Ok(PoolEntry { quic, h3 })
+                        }
+                        Err(e) => Err(ClientError::StreamIo(std::io::Error::other(e.to_string()))),
+                    },
+                    Err(e) => Err(e),
+                };
+
+                let mut map = pool_inner.lock().await;
+                if let Some(Slot::Connecting(waiters)) = map.remove(&addr) {
+                    if let Ok(entry) = &res {
+                        map.insert(addr, Slot::Ready(entry.clone()));
+                    }
+                    for tx in waiters {
+                        let send_res = match &res {
+                            Ok(entry) => Ok(entry.clone()),
+                            Err(e) => {
+                                Err(ClientError::StreamIo(std::io::Error::other(e.to_string())))
+                            }
+                        };
+                        let _ = tx.send(send_res);
+                    }
+                }
+            });
+            rx
         };
 
-        if !needs_connect {
-            unreachable!()
-        }
-
-        let quic = connect_fn(addr).await?;
-        let h3 = H3ClientSession::new(quic.get_ref().clone())
-            .await
-            .map_err(|e| ClientError::StreamIo(std::io::Error::other(e.to_string())))?;
-        record_connection("client");
-        debug!(remote = %addr, "established new QUIC connection + h3 session");
-        let entry = PoolEntry {
-            quic: quic.clone(),
-            h3,
-        };
-
-        let mut map = self.inner.lock().await;
-        map.insert(addr, entry.clone());
-        Ok(entry)
+        rx.await.unwrap_or_else(|_| {
+            Err(ClientError::StreamIo(std::io::Error::other(
+                "connection task cancelled",
+            )))
+        })
     }
 
-    pub async fn remove(&self, addr: &SocketAddr) {
+    pub async fn invalidate(&self, addr: &SocketAddr) {
         let mut map = self.inner.lock().await;
-        map.remove(addr);
+        if let Some(Slot::Ready(entry)) = map.get(addr) {
+            if entry.quic.is_closed() {
+                map.remove(addr);
+            }
+        }
     }
 }
 
