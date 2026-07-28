@@ -239,7 +239,10 @@ impl QuicServer {
             }
         };
 
-        if tokio::time::timeout(self.graceful_timeout, wait_for_connections).await.is_err() {
+        if tokio::time::timeout(self.graceful_timeout, wait_for_connections)
+            .await
+            .is_err()
+        {
             error!("graceful shutdown timed out, closing endpoint forcefully");
             endpoint.close(0, b"shutdown timeout");
         }
